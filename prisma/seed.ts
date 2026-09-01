@@ -21,6 +21,7 @@ async function main() {
       email: "admin@portafolio.com",
       name: "Usuario Demo",
       password: hashedPassword,
+      role: "ADMIN",
     },
   });
 

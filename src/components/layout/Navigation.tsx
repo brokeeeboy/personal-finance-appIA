@@ -10,10 +10,11 @@ import {
   HandCoins,
   LogOut,
   Wallet,
+  ShieldCheck,
 } from "lucide-react";
-import { signOut } from "next-auth/react";
+import { signOut, useSession } from "next-auth/react";
 
-const links = [
+const defaultLinks = [
   { name: "Dashboard", href: "/", icon: Home },
   { name: "Transacciones", href: "/transacciones", icon: ArrowRightLeft },
   { name: "Cuentas", href: "/cuentas", icon: CreditCard },
@@ -23,6 +24,11 @@ const links = [
 
 export default function Navigation() {
   const pathname = usePathname();
+  const { data: session } = useSession();
+  const links =
+    session?.user?.role === "ADMIN"
+      ? [...defaultLinks, { name: "Admin", href: "/admin", icon: ShieldCheck }]
+      : defaultLinks;
 
   return (
     <>
