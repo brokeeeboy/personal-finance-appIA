@@ -2,8 +2,329 @@
 
 import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth"; // Corregido a lib/auth
+import { authOptions } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
+
+function normalizeText(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
+function parseCurrencyNumber(value: string) {
+  const cleaned = value
+    .replace(/[$\s]/g, "")
+    .replace(/\./g, "")
+    .replace(/,/g, ".");
+
+  if (!cleaned) return 0;
+
+  const amount = Number(cleaned);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function extractAmount(message: string) {
+  const matches = [...message.matchAll(/\d+(?:[.,]\d{3})*(?:[.,]\d+)?/g)];
+  if (matches.length === 0) return 0;
+
+  const amounts = matches.map((match) => parseCurrencyNumber(match[0]));
+  return Math.max(...amounts.filter((amount) => amount > 0));
+}
+
+function cleanDescription(message: string) {
+  return (
+    message
+      .replace(
+        /(?:gasté|gasto|gastado|compré|compré|compré|pagué|pago|me pagaron|ingresé|ingreso|ahorré|ahorro|presté|prestamos|prestamo|prestó|le presté|te presté)/gi,
+        "",
+      )
+      .replace(
+        /\b(?:con|por|en|de|mi|tu|a|al|la|el|para|hoy|ayer|hace|pago|pagando|con la|con el)\b/gi,
+        " ",
+      )
+      .replace(/\s+/g, " ")
+      .replace(/^[\s,.-]+|[\s,.-]+$/g, "")
+      .trim() || "Movimiento financiero"
+  );
+}
+
+function matchAccount(
+  accounts: Array<{ id: string; name: string; type: string }>,
+  text: string,
+) {
+  const normalized = normalizeText(text);
+
+  const ranked = [...accounts].sort((a, b) => {
+    const aMatch = normalizeText(a.name).includes(normalized) ? 1 : 0;
+    const bMatch = normalizeText(b.name).includes(normalized) ? 1 : 0;
+    return bMatch - aMatch;
+  });
+
+  if (normalized.includes("debito") || normalized.includes("débito")) {
+    const debitAccount = accounts.find(
+      (account) =>
+        normalizeText(account.name).includes("debito") ||
+        normalizeText(account.name).includes("debito"),
+    );
+    if (debitAccount) return debitAccount;
+  }
+
+  if (
+    normalized.includes("visa") ||
+    normalized.includes("mastercard") ||
+    normalized.includes("credito") ||
+    normalized.includes("crédito")
+  ) {
+    const creditAccount = accounts.find(
+      (account) =>
+        normalizeText(account.name).includes("visa") ||
+        normalizeText(account.name).includes("mastercard") ||
+        normalizeText(account.name).includes("credito") ||
+        normalizeText(account.name).includes("crédito"),
+    );
+    if (creditAccount) return creditAccount;
+  }
+
+  return ranked[0] ?? accounts[0];
+}
+
+function matchCategory(
+  categories: Array<{ id: string; name: string }>,
+  text: string,
+) {
+  const normalized = normalizeText(text);
+
+  const keywords: Record<string, string[]> = {
+    comida: [
+      "almuerzo",
+      "desayuno",
+      "cena",
+      "comida",
+      "restaurante",
+      "supermercado",
+      "mercado",
+      "delivery",
+    ],
+    transporte: [
+      "micro",
+      "bus",
+      "uber",
+      "taxi",
+      "auto",
+      "bencina",
+      "gasolina",
+      "transporte",
+    ],
+    hogar: [
+      "casa",
+      "arriendo",
+      "luz",
+      "agua",
+      "internet",
+      "servicios",
+      "telefono",
+    ],
+    salud: ["farmacia", "medico", "consulta", "salud"],
+    ocio: ["cine", "pelicula", "entretenimiento", "juegos", "ocio"],
+    compras: ["ropa", "compra", "tienda", "compras"],
+    ingresos: ["sueldo", "arriendo", "venta", "ingreso", "pago"],
+  };
+
+  for (const [categoryName, terms] of Object.entries(keywords)) {
+    const categoryMatch = categories.find(
+      (category) =>
+        normalizeText(category.name).includes(categoryName) ||
+        terms.some((term) => normalized.includes(term)),
+    );
+
+    if (categoryMatch) return categoryMatch;
+  }
+
+  return categories[0];
+}
+
+function matchGoal(goals: Array<{ id: string; name: string }>, text: string) {
+  const normalized = normalizeText(text);
+
+  const goalMatch = goals.find(
+    (goal) =>
+      normalizeText(goal.name).includes(normalized.split(" ")[0]) ||
+      normalizeText(goal.name).includes("vacaciones") ||
+      normalizeText(goal.name).includes("meta"),
+  );
+
+  return goalMatch ?? goals[0];
+}
+
+function extractPersonName(message: string) {
+  const normalized = message.trim();
+  const match = normalized.match(
+    /(?:a|al|la|para)\s+([A-ZÁÉÍÓÚÑa-záéíóúñ][A-Za-zÁÉÍÓÚÑáéíóúñ'\- ]+)/i,
+  );
+  if (match?.[1]) return match[1].trim();
+
+  return "persona";
+}
+
+function parseFinanceFallback(
+  message: string,
+  accounts: Array<{ id: string; name: string; type: string }>,
+  categories: Array<{ id: string; name: string }>,
+  goals: Array<{ id: string; name: string }>,
+) {
+  const text = normalizeText(message);
+  const amount = extractAmount(message);
+
+  if (!text || !amount) {
+    return {
+      action: "unknown",
+      reply:
+        "No pude detectar un monto o la acción en tu mensaje. Intenta algo como: 'Gasté 8500 en el almuerzo de hoy'.",
+    };
+  }
+
+  const description = cleanDescription(message);
+  const matchedAccount = matchAccount(accounts, text) ?? accounts[0];
+  const matchedCategory = matchCategory(categories, text) ?? categories[0];
+  const matchedGoal = matchGoal(goals, text) ?? goals[0];
+
+  if (/(gast|compr|pagu|costo|consum|deuda|se fue|se fue)/.test(text)) {
+    return {
+      action: "transaction",
+      amount,
+      description,
+      type: "EXPENSE",
+      accountId: matchedAccount?.id,
+      categoryId: matchedCategory?.id,
+    };
+  }
+
+  if (/(me pagaron|ingres|deposit|gan|cobr|recib|arriendo)/.test(text)) {
+    return {
+      action: "transaction",
+      amount,
+      description,
+      type: "INCOME",
+      accountId: matchedAccount?.id,
+      categoryId: matchedCategory?.id,
+    };
+  }
+
+  if (
+    /(prest|prestamos|prestamo|debe|debemos|te debo|te debe|le debes|le debo)/.test(
+      text,
+    )
+  ) {
+    return {
+      action: "debt",
+      type: /(?:te debe|le debes|le debo|debemos)/.test(text)
+        ? "OWE_ME"
+        : "I_OWE",
+      personName: extractPersonName(message),
+      amount,
+      description,
+    };
+  }
+
+  if (/(ahorr|meta|aport|abon)/.test(text)) {
+    return {
+      action: "goal",
+      goalId: matchedGoal?.id,
+      amount,
+    };
+  }
+
+  return {
+    action: "unknown",
+    reply:
+      "¿Quieres registrar un gasto, un ingreso, una deuda o un aporte a una meta?",
+  };
+}
+
+async function executeParsedAction(
+  parsed: any,
+  userId: string,
+  accounts: Array<{ id: string; name: string; type: string }>,
+) {
+  if (parsed.action === "transaction") {
+    const account =
+      accounts.find((item) => item.id === parsed.accountId) ?? accounts[0];
+    if (!account) throw new Error("Cuenta no encontrada");
+
+    await prisma.$transaction(async (tx) => {
+      await tx.transaction.create({
+        data: {
+          userId,
+          description: parsed.description,
+          amount: parsed.amount,
+          type: parsed.type,
+          date: new Date(),
+          accountId: account.id,
+          categoryId: parsed.categoryId || null,
+          isAutoCategorized: true,
+        },
+      });
+
+      let balanceChange =
+        parsed.type === "INCOME" ? parsed.amount : -parsed.amount;
+      if (account.type === "CREDIT") balanceChange = -balanceChange;
+
+      await tx.account.update({
+        where: { id: account.id },
+        data: { balance: { increment: balanceChange } },
+      });
+    });
+
+    revalidatePath("/");
+    return {
+      reply: `✅ Listo. Registré un ${parsed.type === "EXPENSE" ? "gasto" : "ingreso"} de $${parsed.amount} en ${parsed.description}.`,
+    };
+  }
+
+  if (parsed.action === "debt") {
+    await prisma.debt.create({
+      data: {
+        userId,
+        type: parsed.type,
+        personName: parsed.personName,
+        amount: parsed.amount,
+        description: parsed.description,
+        status: "PENDING",
+        date: new Date(),
+      },
+    });
+    revalidatePath("/deudas");
+    return {
+      reply: `✅ Anotado. Registré que ${parsed.type === "OWE_ME" ? `${parsed.personName} te debe` : `le debes a ${parsed.personName}`} $${parsed.amount}.`,
+    };
+  }
+
+  if (parsed.action === "goal") {
+    await prisma.$transaction([
+      prisma.goalContribution.create({
+        data: { goalId: parsed.goalId, amount: parsed.amount },
+      }),
+      prisma.goal.update({
+        where: { id: parsed.goalId },
+        data: { currentAmount: { increment: parsed.amount } },
+      }),
+    ]);
+    revalidatePath("/metas");
+    return {
+      reply: `✅ ¡Excelente! Aboné $${parsed.amount} a tu meta de ahorro.`,
+    };
+  }
+
+  if (parsed.action === "unknown") {
+    return {
+      reply: parsed.reply || "¿Me podrías dar un poco más de detalle?",
+    };
+  }
+
+  return { reply: "Entendí el mensaje, pero no supe qué acción ejecutar." };
+}
 
 export async function processChatMessage(message: string) {
   const session = await getServerSession(authOptions);
@@ -11,7 +332,6 @@ export async function processChatMessage(message: string) {
 
   const userId = session.user.id;
 
-  // 1. Obtener el contexto del usuario (sus cuentas, categorías y metas reales)
   const [accounts, categories, goals] = await Promise.all([
     prisma.account.findMany({
       where: { userId },
@@ -27,7 +347,6 @@ export async function processChatMessage(message: string) {
     }),
   ]);
 
-  // Si no tiene cuentas, la IA no puede hacer mucho
   if (accounts.length === 0) {
     return {
       reply:
@@ -35,8 +354,17 @@ export async function processChatMessage(message: string) {
     };
   }
 
-  // 2. Construir el Prompt del Sistema
-  const systemPrompt = `
+  const fallback = parseFinanceFallback(message, accounts, categories, goals);
+
+  try {
+    const apiKey = process.env.AI_API_KEY;
+    const aiBaseUrl = process.env.AI_BASE_URL;
+
+    if (!apiKey || !aiBaseUrl) {
+      return await executeParsedAction(fallback, userId, accounts);
+    }
+
+    const systemPrompt = `
 Eres un asistente financiero inteligente. Tu trabajo es interpretar el mensaje del usuario y extraer los datos en formato JSON para ejecutar una acción.
 Hoy es ${new Date().toLocaleDateString("es-CL")}.
 
@@ -58,120 +386,49 @@ REGLAS:
 6. Si falta información crucial (como el monto o a qué cuenta va) o es una charla normal, devuelve: { "action": "unknown", "reply": "Tu respuesta amigable preguntando qué falta o conversando" }
 `;
 
-  // 3. Llamar a la IA (Usando fetch estándar para máxima compatibilidad)
-  try {
-    const response = await fetch(
-      `${process.env.AI_BASE_URL}/chat/completions`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.AI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: "deepseek-chat", // Cambia si usas otro modelo
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: message },
-          ],
-          temperature: 0.1, // Baja temperatura para que sea determinista y el JSON no falle
-        }),
+    const response = await fetch(`${aiBaseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
       },
-    );
+      body: JSON.stringify({
+        model: "deepseek-chat",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: message },
+        ],
+        temperature: 0.1,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error("AI request failed:", response.status, response.statusText);
+      return await executeParsedAction(fallback, userId, accounts);
+    }
 
     const data = await response.json();
-    const aiContent = data.choices[0].message.content;
+    const aiContent = data?.choices?.[0]?.message?.content;
 
-    // Extraer el JSON (por si la IA agregó markdown tipo ```json ... ```)
-    const jsonStr = aiContent
+    if (!aiContent) {
+      return await executeParsedAction(fallback, userId, accounts);
+    }
+
+    const jsonStr = String(aiContent)
       .replace(/```json/g, "")
       .replace(/```/g, "")
       .trim();
-    const parsed = JSON.parse(jsonStr);
 
-    // 4. Ejecutar la acción en la base de datos
-    if (parsed.action === "transaction") {
-      // Buscar la cuenta para actualizar el saldo
-      const account = accounts.find(
-        (a: { id: string; type: string }) => a.id === parsed.accountId,
-      );
-      if (!account) throw new Error("Cuenta no encontrada");
-
-      await prisma.$transaction(async (tx) => {
-        await tx.transaction.create({
-          data: {
-            userId,
-            description: parsed.description,
-            amount: parsed.amount,
-            type: parsed.type,
-            date: new Date(),
-            accountId: parsed.accountId,
-            categoryId: parsed.categoryId || null,
-            isAutoCategorized: true,
-          },
-        });
-
-        let balanceChange =
-          parsed.type === "INCOME" ? parsed.amount : -parsed.amount;
-        if (account.type === "CREDIT") balanceChange = -balanceChange; // Lógica inversa para tarjetas
-
-        await tx.account.update({
-          where: { id: account.id },
-          data: { balance: { increment: balanceChange } },
-        });
-      });
-      revalidatePath("/");
-      return {
-        reply: `✅ Listo. Registré un ${parsed.type === "EXPENSE" ? "gasto" : "ingreso"} de $${parsed.amount} en ${parsed.description}.`,
-      };
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonStr);
+    } catch {
+      return await executeParsedAction(fallback, userId, accounts);
     }
 
-    if (parsed.action === "debt") {
-      await prisma.debt.create({
-        data: {
-          userId,
-          type: parsed.type,
-          personName: parsed.personName,
-          amount: parsed.amount,
-          description: parsed.description,
-          status: "PENDING",
-          date: new Date(),
-        },
-      });
-      revalidatePath("/deudas");
-      return {
-        reply: `✅ Anotado. Registré que ${parsed.type === "OWE_ME" ? `${parsed.personName} te debe` : `le debes a ${parsed.personName}`} $${parsed.amount}.`,
-      };
-    }
-
-    if (parsed.action === "goal") {
-      await prisma.$transaction([
-        prisma.goalContribution.create({
-          data: { goalId: parsed.goalId, amount: parsed.amount },
-        }),
-        prisma.goal.update({
-          where: { id: parsed.goalId },
-          data: { currentAmount: { increment: parsed.amount } },
-        }),
-      ]);
-      revalidatePath("/metas");
-      return {
-        reply: `✅ ¡Excelente! Aboné $${parsed.amount} a tu meta de ahorro.`,
-      };
-    }
-
-    if (parsed.action === "unknown") {
-      return {
-        reply: parsed.reply || "¿Me podrías dar un poco más de detalle?",
-      };
-    }
-
-    return { reply: "Entendí el mensaje, pero no supe qué acción ejecutar." };
+    return await executeParsedAction(parsed, userId, accounts);
   } catch (error) {
     console.error("Error AI:", error);
-    return {
-      reply:
-        "Hubo un error al procesar tu mensaje. Intenta ser más específico (ej: 'Gasté 5000 en comida pagado con la Visa').",
-    };
+    return await executeParsedAction(fallback, userId, accounts);
   }
 }
