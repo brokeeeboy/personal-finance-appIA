@@ -14,7 +14,15 @@ export async function createAccount(formData: FormData) {
   const bankName = formData.get("bankName") as string;
   const balance = parseFloat(formData.get("balance") as string) || 0;
   const lastFour = formData.get("lastFour") as string | null;
-  const creditLimit = formData.get("creditLimit") ? parseFloat(formData.get("creditLimit") as string) : null;
+  const creditLimit = formData.get("creditLimit")
+    ? parseFloat(formData.get("creditLimit") as string)
+    : null;
+  const billingDay = formData.get("billingDay")
+    ? Number(formData.get("billingDay"))
+    : null;
+  const paymentDay = formData.get("paymentDay")
+    ? Number(formData.get("paymentDay"))
+    : null;
 
   await prisma.account.create({
     data: {
@@ -25,6 +33,8 @@ export async function createAccount(formData: FormData) {
       balance,
       lastFour: lastFour ? lastFour.slice(0, 4) : null,
       creditLimit,
+      billingDay: type === "CREDIT" ? billingDay : null,
+      paymentDay: type === "CREDIT" ? paymentDay : null,
     },
   });
 

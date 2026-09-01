@@ -168,6 +168,167 @@ function extractPersonName(message: string) {
   return "persona";
 }
 
+const pendingDebtDrafts = new Map<
+  string,
+  {
+    type: string;
+    personName: string;
+    amount: number;
+    description: string;
+  }
+>();
+
+function getMonthNumber(value: string) {
+  const monthMap: Record<string, number> = {
+    enero: 0,
+    feb: 1,
+    febrero: 1,
+    mar: 2,
+    marzo: 2,
+    abr: 3,
+    abril: 3,
+    may: 4,
+    mayo: 4,
+    jun: 5,
+    junio: 5,
+    jul: 6,
+    julio: 6,
+    ago: 7,
+    agosto: 7,
+    sep: 8,
+    septiembre: 8,
+    oct: 9,
+    octubre: 9,
+    nov: 10,
+    noviembre: 10,
+    dic: 11,
+    diciembre: 11,
+  };
+
+  return monthMap[normalizeText(value)] ?? -1;
+}
+
+export function extractDebtDueDate(message: string): Date | null {
+  const text = message.toLowerCase();
+  const now = new Date();
+
+  if (/(hoy|today)/.test(text)) {
+    const date = new Date(now);
+    date.setHours(0, 0, 0, 0);
+    return date;
+  }
+
+  if (/(mañana|tomorrow)/.test(text)) {
+    const date = new Date(now);
+    date.setDate(date.getDate() + 1);
+    date.setHours(0, 0, 0, 0);
+    return date;
+  }
+
+  const isoMatch = text.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
+  if (isoMatch) {
+    const year = Number(isoMatch[1]);
+    const month = Number(isoMatch[2]);
+    const day = Number(isoMatch[3]);
+
+    if (day && month && year) {
+      const date = new Date(year, month - 1, day);
+      date.setHours(0, 0, 0, 0);
+      return date;
+    }
+  }
+
+  const slashMatch = text.match(/(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
+  if (slashMatch) {
+    const day = Number(slashMatch[1]);
+    const month = Number(slashMatch[2]);
+    const year = Number(slashMatch[3]);
+
+    if (day && month && year) {
+      const normalizedYear = year < 100 ? 2000 + year : year;
+      const date = new Date(normalizedYear, month - 1, day);
+      date.setHours(0, 0, 0, 0);
+      return date;
+    }
+  }
+
+  const monthMatch = text.match(
+    /(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)/i,
+  );
+  if (monthMatch) {
+    const day = Number(monthMatch[1]);
+    const month = getMonthNumber(monthMatch[2]);
+    const year = now.getFullYear();
+
+    if (day && month >= 0) {
+      const date = new Date(year, month, day);
+      date.setHours(0, 0, 0, 0);
+      return date;
+    }
+  }
+
+  const monthNameMatch = text.match(
+    /(el\s+)?(\d{1,2})\s+(?:de\s+)?(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)/i,
+  );
+  if (monthNameMatch) {
+    const day = Number(monthNameMatch[2]);
+    const month = getMonthNumber(monthNameMatch[3]);
+    const year = now.getFullYear();
+
+    if (day && month >= 0) {
+      const date = new Date(year, month, day);
+      date.setHours(0, 0, 0, 0);
+      return date;
+    }
+  }
+
+  return null;
+}
+
+export function isPositiveDebtConfirmation(message: string) {
+  const text = normalizeText(message);
+  return /(si|sí|ya|pagué|pague|pagada|pagado|cancelé|cancele|cancelado|listo|confirmo|hecho)/.test(
+    text,
+  );
+}
+
+export function getDebtReminderPrompt(
+  debts: Array<{
+    id: string;
+    personName: string;
+    amount: number;
+    status: string;
+    dueDate: Date | string | null;
+  }>,
+  now = new Date(),
+) {
+  const upcomingDebts = debts
+    .filter(
+      (debt) =>
+        debt.status === "PENDING" &&
+        debt.dueDate &&
+        new Date(debt.dueDate).getTime() >= now.getTime(),
+    )
+    .sort(
+      (a, b) =>
+        new Date(a.dueDate as Date).getTime() -
+        new Date(b.dueDate as Date).getTime(),
+    );
+
+  if (upcomingDebts.length === 0) return null;
+
+  const nextDebt = upcomingDebts[0];
+  const dueDate = new Date(nextDebt.dueDate as Date);
+  const diffMs = dueDate.getTime() - now.getTime();
+  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+  if (diffDays <= 1) {
+    return `Recordatorio: la deuda de ${nextDebt.personName} por $${nextDebt.amount} vence ${diffDays === 0 ? "hoy" : "mañana"}. ¿Ya la pagaste?`;
+  }
+
+  return null;
+}
+
 function parseFinanceFallback(
   message: string,
   accounts: Array<{ id: string; name: string; type: string }>,
@@ -217,6 +378,22 @@ function parseFinanceFallback(
       text,
     )
   ) {
+    const dueDate = extractDebtDueDate(message);
+    if (!dueDate) {
+      return {
+        action: "debt",
+        type: /(?:te debe|le debes|le debo|debemos)/.test(text)
+          ? "OWE_ME"
+          : "I_OWE",
+        personName: extractPersonName(message),
+        amount,
+        description,
+        askForDueDate: true,
+        reply:
+          "¿Para cuándo vence ese pago? Te lo guardo con fecha y te recordaré un día antes.",
+      };
+    }
+
     return {
       action: "debt",
       type: /(?:te debe|le debes|le debo|debemos)/.test(text)
@@ -225,6 +402,7 @@ function parseFinanceFallback(
       personName: extractPersonName(message),
       amount,
       description,
+      dueDate: dueDate.toISOString(),
     };
   }
 
@@ -284,6 +462,23 @@ async function executeParsedAction(
   }
 
   if (parsed.action === "debt") {
+    if (parsed.askForDueDate || !parsed.dueDate) {
+      if (parsed.personName && parsed.amount > 0) {
+        pendingDebtDrafts.set(userId, {
+          type: parsed.type,
+          personName: parsed.personName,
+          amount: parsed.amount,
+          description: parsed.description || "Deuda",
+        });
+      }
+
+      return {
+        reply:
+          parsed.reply ||
+          "¿Para cuándo vence ese pago? Te lo guardo con fecha y te recordaré un día antes.",
+      };
+    }
+
     await prisma.debt.create({
       data: {
         userId,
@@ -293,11 +488,14 @@ async function executeParsedAction(
         description: parsed.description,
         status: "PENDING",
         date: new Date(),
+        dueDate: parsed.dueDate ? new Date(parsed.dueDate) : null,
       },
     });
+
+    pendingDebtDrafts.delete(userId);
     revalidatePath("/deudas");
     return {
-      reply: `✅ Anotado. Registré que ${parsed.type === "OWE_ME" ? `${parsed.personName} te debe` : `le debes a ${parsed.personName}`} $${parsed.amount}.`,
+      reply: `✅ Anotado. Registré que ${parsed.type === "OWE_ME" ? `${parsed.personName} te debe` : `le debes a ${parsed.personName}`} $${parsed.amount}${parsed.dueDate ? ` y vence el ${new Date(parsed.dueDate).toLocaleDateString("es-CL")}` : ""}.`,
     };
   }
 
@@ -331,6 +529,62 @@ export async function processChatMessage(message: string) {
   if (!session?.user?.id) throw new Error("No autorizado");
 
   const userId = session.user.id;
+
+  const draft = pendingDebtDrafts.get(userId);
+  if (draft) {
+    const dueDate = extractDebtDueDate(message);
+    if (dueDate) {
+      await prisma.debt.create({
+        data: {
+          userId,
+          type: draft.type,
+          personName: draft.personName,
+          amount: draft.amount,
+          description: draft.description,
+          status: "PENDING",
+          date: new Date(),
+          dueDate,
+        },
+      });
+
+      pendingDebtDrafts.delete(userId);
+      revalidatePath("/deudas");
+      return {
+        reply: `✅ Anotado. Registré que ${draft.type === "OWE_ME" ? `${draft.personName} te debe` : `le debes a ${draft.personName}`} $${draft.amount} y vence el ${dueDate.toLocaleDateString("es-CL")}.`,
+      };
+    }
+  }
+
+  const debtReminder = await prisma.debt
+    .findMany({
+      where: { userId, status: "PENDING", dueDate: { not: null } },
+      select: {
+        id: true,
+        personName: true,
+        amount: true,
+        status: true,
+        dueDate: true,
+      },
+    })
+    .then((debts) => getDebtReminderPrompt(debts));
+
+  if (debtReminder && isPositiveDebtConfirmation(message)) {
+    const upcomingDebt = await prisma.debt.findFirst({
+      where: { userId, status: "PENDING", dueDate: { not: null } },
+      orderBy: { dueDate: "asc" },
+    });
+
+    if (upcomingDebt) {
+      await prisma.debt.update({
+        where: { id: upcomingDebt.id },
+        data: { status: "PAID" },
+      });
+      revalidatePath("/deudas");
+      return {
+        reply: `✅ Perfecto. Marqué la deuda de ${upcomingDebt.personName} como pagada.`,
+      };
+    }
+  }
 
   const [accounts, categories, goals] = await Promise.all([
     prisma.account.findMany({
@@ -381,7 +635,9 @@ REGLAS:
 1. Responde ÚNICAMENTE con un objeto JSON válido. Nada de texto antes o después.
 2. Identifica la "action": puede ser "transaction", "debt", "goal", o "unknown".
 3. Si la acción es "transaction", devuelve: { "action": "transaction", "amount": numero, "description": string, "type": "EXPENSE" o "INCOME", "accountId": string (id exacto de la cuenta), "categoryId": string (id de la categoría más lógica, opcional) }
-4. Si la acción es "debt", devuelve: { "action": "debt", "type": "OWE_ME" o "I_OWE", "personName": string, "amount": numero, "description": string }
+4. Si la acción es "debt":
+   - Si el usuario no dio una fecha de pago, devuelve: { "action": "debt", "type": "OWE_ME" o "I_OWE", "personName": string, "amount": numero, "description": string, "askForDueDate": true, "reply": "¿Para cuándo vence ese pago? Te lo guardo con fecha y te recordaré un día antes." }
+   - Si sí dio la fecha, devuelve: { "action": "debt", "type": "OWE_ME" o "I_OWE", "personName": string, "amount": numero, "description": string, "dueDate": "ISO string" }
 5. Si la acción es "goal", devuelve: { "action": "goal", "goalId": string (id de la meta), "amount": numero }
 6. Si falta información crucial (como el monto o a qué cuenta va) o es una charla normal, devuelve: { "action": "unknown", "reply": "Tu respuesta amigable preguntando qué falta o conversando" }
 `;
