@@ -5,7 +5,7 @@ import {
   extractDebtDueDate,
   getDebtReminderPrompt,
   isPositiveDebtConfirmation,
-} from "./chatActions";
+} from "../lib/chatHelpers";
 
 test("extractDebtDueDate parses a date from a debt message", () => {
   const result = extractDebtDueDate(

@@ -45,11 +45,11 @@ export default function Navigation() {
                 className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
                   isActive
                     ? "bg-gradient-to-r from-cyan-500/20 to-blue-600/20 text-white border border-cyan-500/30 shadow-lg shadow-cyan-950/30"
-                    : "text-slate-400 hover:bg-slate-800/80 hover:text-white"
+                    : "text-slate-200 hover:bg-slate-800/80 hover:text-white"
                 }`}
               >
-                <Icon size={20} />
-                <span className="font-medium">{link.name}</span>
+                <Icon size={20} className="text-current" />
+                <span className="font-medium text-current">{link.name}</span>
               </Link>
             );
           })}
@@ -73,10 +73,12 @@ export default function Navigation() {
             <Link
               key={link.name}
               href={link.href}
-              className={`flex flex-col items-center p-2 rounded-lg ${isActive ? "text-cyan-400" : "text-slate-500"}`}
+              className={`flex flex-col items-center p-2 rounded-lg ${isActive ? "text-cyan-300" : "text-slate-200"}`}
             >
-              <Icon size={24} />
-              <span className="text-[10px] mt-1 font-medium">{link.name}</span>
+              <Icon size={24} className="text-current" />
+              <span className="text-[10px] mt-1 font-medium text-current">
+                {link.name}
+              </span>
             </Link>
           );
         })}
