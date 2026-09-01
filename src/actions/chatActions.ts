@@ -13,20 +13,32 @@ export async function processChatMessage(message: string) {
 
   // 1. Obtener el contexto del usuario (sus cuentas, categorías y metas reales)
   const [accounts, categories, goals] = await Promise.all([
-    prisma.account.findMany({ where: { userId }, select: { id: true, name: true, type: true } }),
-    prisma.category.findMany({ where: { userId }, select: { id: true, name: true } }),
-    prisma.goal.findMany({ where: { userId }, select: { id: true, name: true } })
+    prisma.account.findMany({
+      where: { userId },
+      select: { id: true, name: true, type: true },
+    }),
+    prisma.category.findMany({
+      where: { userId },
+      select: { id: true, name: true },
+    }),
+    prisma.goal.findMany({
+      where: { userId },
+      select: { id: true, name: true },
+    }),
   ]);
 
   // Si no tiene cuentas, la IA no puede hacer mucho
   if (accounts.length === 0) {
-    return { reply: "Para empezar a registrar movimientos, primero debes crear al menos una cuenta en la sección 'Cuentas'." };
+    return {
+      reply:
+        "Para empezar a registrar movimientos, primero debes crear al menos una cuenta en la sección 'Cuentas'.",
+    };
   }
 
   // 2. Construir el Prompt del Sistema
   const systemPrompt = `
 Eres un asistente financiero inteligente. Tu trabajo es interpretar el mensaje del usuario y extraer los datos en formato JSON para ejecutar una acción.
-Hoy es ${new Date().toLocaleDateString('es-CL')}.
+Hoy es ${new Date().toLocaleDateString("es-CL")}.
 
 CUENTAS DEL USUARIO:
 ${JSON.stringify(accounts)}
@@ -48,33 +60,41 @@ REGLAS:
 
   // 3. Llamar a la IA (Usando fetch estándar para máxima compatibilidad)
   try {
-    const response = await fetch(`${process.env.AI_BASE_URL}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.AI_API_KEY}`
+    const response = await fetch(
+      `${process.env.AI_BASE_URL}/chat/completions`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.AI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "deepseek-chat", // Cambia si usas otro modelo
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: message },
+          ],
+          temperature: 0.1, // Baja temperatura para que sea determinista y el JSON no falle
+        }),
       },
-      body: JSON.stringify({
-        model: "deepseek-chat", // Cambia si usas otro modelo
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: message }
-        ],
-        temperature: 0.1, // Baja temperatura para que sea determinista y el JSON no falle
-      })
-    });
+    );
 
     const data = await response.json();
     const aiContent = data.choices[0].message.content;
-    
+
     // Extraer el JSON (por si la IA agregó markdown tipo ```json ... ```)
-    const jsonStr = aiContent.replace(/```json/g, '').replace(/```/g, '').trim();
+    const jsonStr = aiContent
+      .replace(/```json/g, "")
+      .replace(/```/g, "")
+      .trim();
     const parsed = JSON.parse(jsonStr);
 
     // 4. Ejecutar la acción en la base de datos
     if (parsed.action === "transaction") {
       // Buscar la cuenta para actualizar el saldo
-      const account = accounts.find(a => a.id === parsed.accountId);
+      const account = accounts.find(
+        (a: { id: string; type: string }) => a.id === parsed.accountId,
+      );
       if (!account) throw new Error("Cuenta no encontrada");
 
       await prisma.$transaction(async (tx) => {
@@ -88,19 +108,22 @@ REGLAS:
             accountId: parsed.accountId,
             categoryId: parsed.categoryId || null,
             isAutoCategorized: true,
-          }
+          },
         });
 
-        let balanceChange = parsed.type === 'INCOME' ? parsed.amount : -parsed.amount;
-        if (account.type === 'CREDIT') balanceChange = -balanceChange; // Lógica inversa para tarjetas
+        let balanceChange =
+          parsed.type === "INCOME" ? parsed.amount : -parsed.amount;
+        if (account.type === "CREDIT") balanceChange = -balanceChange; // Lógica inversa para tarjetas
 
         await tx.account.update({
           where: { id: account.id },
-          data: { balance: { increment: balanceChange } }
+          data: { balance: { increment: balanceChange } },
         });
       });
       revalidatePath("/");
-      return { reply: `✅ Listo. Registré un ${parsed.type === 'EXPENSE' ? 'gasto' : 'ingreso'} de $${parsed.amount} en ${parsed.description}.` };
+      return {
+        reply: `✅ Listo. Registré un ${parsed.type === "EXPENSE" ? "gasto" : "ingreso"} de $${parsed.amount} en ${parsed.description}.`,
+      };
     }
 
     if (parsed.action === "debt") {
@@ -112,30 +135,43 @@ REGLAS:
           amount: parsed.amount,
           description: parsed.description,
           status: "PENDING",
-          date: new Date()
-        }
+          date: new Date(),
+        },
       });
       revalidatePath("/deudas");
-      return { reply: `✅ Anotado. Registré que ${parsed.type === 'OWE_ME' ? `${parsed.personName} te debe` : `le debes a ${parsed.personName}`} $${parsed.amount}.` };
+      return {
+        reply: `✅ Anotado. Registré que ${parsed.type === "OWE_ME" ? `${parsed.personName} te debe` : `le debes a ${parsed.personName}`} $${parsed.amount}.`,
+      };
     }
 
     if (parsed.action === "goal") {
       await prisma.$transaction([
-        prisma.goalContribution.create({ data: { goalId: parsed.goalId, amount: parsed.amount } }),
-        prisma.goal.update({ where: { id: parsed.goalId }, data: { currentAmount: { increment: parsed.amount } } })
+        prisma.goalContribution.create({
+          data: { goalId: parsed.goalId, amount: parsed.amount },
+        }),
+        prisma.goal.update({
+          where: { id: parsed.goalId },
+          data: { currentAmount: { increment: parsed.amount } },
+        }),
       ]);
       revalidatePath("/metas");
-      return { reply: `✅ ¡Excelente! Aboné $${parsed.amount} a tu meta de ahorro.` };
+      return {
+        reply: `✅ ¡Excelente! Aboné $${parsed.amount} a tu meta de ahorro.`,
+      };
     }
 
     if (parsed.action === "unknown") {
-      return { reply: parsed.reply || "¿Me podrías dar un poco más de detalle?" };
+      return {
+        reply: parsed.reply || "¿Me podrías dar un poco más de detalle?",
+      };
     }
 
     return { reply: "Entendí el mensaje, pero no supe qué acción ejecutar." };
-
   } catch (error) {
     console.error("Error AI:", error);
-    return { reply: "Hubo un error al procesar tu mensaje. Intenta ser más específico (ej: 'Gasté 5000 en comida pagado con la Visa')." };
+    return {
+      reply:
+        "Hubo un error al procesar tu mensaje. Intenta ser más específico (ej: 'Gasté 5000 en comida pagado con la Visa').",
+    };
   }
 }

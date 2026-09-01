@@ -12,7 +12,8 @@ export async function createGoal(formData: FormData) {
   const name = formData.get("name") as string;
   const targetAmount = parseFloat(formData.get("targetAmount") as string);
   const targetDateStr = formData.get("targetDate") as string;
-  const initialAmount = parseFloat(formData.get("initialAmount") as string) || 0;
+  const initialAmount =
+    parseFloat(formData.get("initialAmount") as string) || 0;
 
   await prisma.goal.create({
     data: {
@@ -23,9 +24,9 @@ export async function createGoal(formData: FormData) {
       targetDate: targetDateStr ? new Date(targetDateStr) : null,
       ...(initialAmount > 0 && {
         contributions: {
-          create: { amount: initialAmount }
-        }
-      })
+          create: { amount: initialAmount },
+        },
+      }),
     },
   });
 

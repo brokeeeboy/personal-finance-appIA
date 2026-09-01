@@ -9,7 +9,8 @@ import DashboardChat from "@/components/dashboard/DashboardChat";
 
 export const metadata = {
   title: "Dashboard | FinanceApp",
-  description: "Tu asistente financiero inteligente. Registra gastos, ingresos y deudas con lenguaje natural.",
+  description:
+    "Tu asistente financiero inteligente. Registra gastos, ingresos y deudas con lenguaje natural.",
 };
 
 export default async function DashboardPage() {
@@ -18,9 +19,12 @@ export default async function DashboardPage() {
 
   // 1. Obtener Cuentas para Saldo Total
   const accounts = await prisma.account.findMany({
-    where: { userId: session.user.id }
+    where: { userId: session.user.id },
   });
-  const totalBalance = accounts.reduce((acc, account) => acc + account.balance, 0);
+  const totalBalance = accounts.reduce(
+    (acc: number, account: { balance: number }) => acc + account.balance,
+    0,
+  );
 
   // 2. Obtener Transacciones del mes actual
   const now = new Date();
@@ -29,16 +33,17 @@ export default async function DashboardPage() {
   const transactions = await prisma.transaction.findMany({
     where: {
       userId: session.user.id,
-      date: { gte: firstDayOfMonth }
+      date: { gte: firstDayOfMonth },
     },
     include: { category: true, account: true },
-    orderBy: { date: "desc" }
+    orderBy: { date: "desc" },
   });
 
   // 3. Calcular ingresos y gastos del mes
   let monthlyIncome = 0;
   let monthlyExpenses = 0;
-  const expensesByCategory: Record<string, { value: number; color: string }> = {};
+  const expensesByCategory: Record<string, { value: number; color: string }> =
+    {};
 
   transactions.forEach((t) => {
     if (t.type === "INCOME") {
@@ -47,7 +52,10 @@ export default async function DashboardPage() {
       monthlyExpenses += t.amount;
       if (t.category) {
         if (!expensesByCategory[t.category.name]) {
-          expensesByCategory[t.category.name] = { value: 0, color: t.category.color || "#6366f1" };
+          expensesByCategory[t.category.name] = {
+            value: 0,
+            color: t.category.color || "#6366f1",
+          };
         }
         expensesByCategory[t.category.name].value += t.amount;
       }
@@ -66,7 +74,6 @@ export default async function DashboardPage() {
 
       {/* Main content — two-column layout */}
       <main className="flex-1 md:ml-64 flex flex-col lg:flex-row gap-6 p-6 md:p-8 pb-24 md:pb-8 min-h-screen">
-
         {/* LEFT — AI Chat (primary, takes all available height) */}
         <section className="flex-1 flex flex-col min-h-[600px] lg:min-h-0">
           <div className="mb-4">

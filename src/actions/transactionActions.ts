@@ -33,7 +33,7 @@ export async function createTransaction(formData: FormData) {
     // 2. Actualizar saldo de la cuenta
     const account = await tx.account.findUnique({ where: { id: accountId } });
     if (account) {
-      const balanceChange = type === 'INCOME' ? amount : -amount;
+      const balanceChange = type === "INCOME" ? amount : -amount;
       await tx.account.update({
         where: { id: accountId },
         data: { balance: account.balance + balanceChange },
@@ -61,9 +61,14 @@ export async function deleteTransaction(id: string) {
     await tx.transaction.delete({ where: { id } });
 
     // 3. Restaurar saldo de la cuenta
-    const account = await tx.account.findUnique({ where: { id: transaction.accountId } });
+    const account = await tx.account.findUnique({
+      where: { id: transaction.accountId },
+    });
     if (account) {
-      const balanceChange = transaction.type === 'INCOME' ? -transaction.amount : transaction.amount;
+      const balanceChange =
+        transaction.type === "INCOME"
+          ? -transaction.amount
+          : transaction.amount;
       await tx.account.update({
         where: { id: transaction.accountId },
         data: { balance: account.balance + balanceChange },
