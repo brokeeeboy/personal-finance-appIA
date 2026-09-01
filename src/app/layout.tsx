@@ -16,7 +16,9 @@ export default async function RootLayout({
 }) {
   return (
     <html lang="es">
-      <body className={`${inter.className} bg-gray-50 text-gray-900`}>
+      <body
+        className={`${inter.className} min-h-screen bg-slate-950 text-slate-100 antialiased`}
+      >
         {children}
       </body>
     </html>

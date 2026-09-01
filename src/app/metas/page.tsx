@@ -23,21 +23,24 @@ export default async function GoalsPage() {
   const totalGoals = goals.length;
 
   return (
-    <div className="flex min-h-screen bg-gray-50/50">
+    <div className="flex min-h-screen bg-slate-950">
       <Navigation />
       <main className="flex-1 md:ml-64 p-6 md:p-8 pb-24 md:pb-8">
         <div className="flex flex-col md:flex-row md:justify-between md:items-end mb-8 gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">
+            <p className="text-xs uppercase tracking-[0.2em] text-cyan-400">
+              Metas
+            </p>
+            <h1 className="text-3xl font-bold text-white mt-2">
               Metas de Ahorro
             </h1>
-            <p className="text-gray-500">
+            <p className="text-slate-400 mt-1">
               Planifica tus próximos grandes pasos financieros.
             </p>
           </div>
           <div className="flex items-center gap-4">
             {totalGoals > 0 && (
-              <div className="flex items-center gap-2 bg-yellow-100 text-yellow-700 px-4 py-2 rounded-lg font-medium text-sm">
+              <div className="flex items-center gap-2 bg-amber-500/10 text-amber-300 border border-amber-400/20 px-4 py-2 rounded-lg font-medium text-sm">
                 <Trophy size={18} />
                 <span>
                   {completedGoals} de {totalGoals} logradas
@@ -49,8 +52,8 @@ export default async function GoalsPage() {
         </div>
 
         {goals.length === 0 ? (
-          <div className="text-center py-20 bg-white rounded-xl border border-dashed border-gray-300">
-            <p className="text-gray-500 mb-4">
+          <div className="text-center py-20 bg-slate-900/70 rounded-2xl border border-dashed border-slate-700">
+            <p className="text-slate-400 mb-4">
               Aún no has definido ninguna meta.
             </p>
           </div>

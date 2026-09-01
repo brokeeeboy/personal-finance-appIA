@@ -69,23 +69,23 @@ export default async function DashboardPage() {
   }));
 
   return (
-    <div className="flex min-h-screen bg-gray-950">
+    <div className="flex min-h-screen bg-slate-950 text-slate-100">
       <Navigation />
 
-      {/* Main content — two-column layout */}
-      <main className="flex-1 md:ml-64 flex flex-col lg:flex-row gap-6 p-6 md:p-8 pb-24 md:pb-8 min-h-screen">
-        {/* LEFT — AI Chat (primary, takes all available height) */}
+      <main className="flex-1 md:ml-64 flex flex-col lg:flex-row gap-6 p-4 md:p-8 pb-24 md:pb-8 min-h-screen">
         <section className="flex-1 flex flex-col min-h-[600px] lg:min-h-0">
-          <div className="mb-4">
-            <h1 className="text-3xl font-bold text-white">
+          <div className="mb-5 rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl shadow-slate-950/30 backdrop-blur-sm">
+            <p className="text-xs font-medium uppercase tracking-[0.2em] text-cyan-400">
+              Panel principal
+            </p>
+            <h1 className="mt-2 text-3xl font-bold text-white">
               Hola, {session.user.name} 👋
             </h1>
-            <p className="text-gray-400 mt-1 text-sm">
+            <p className="mt-2 text-sm text-slate-400">
               Cuéntame qué pasó hoy con tus finanzas — yo lo registro.
             </p>
           </div>
 
-          {/* DashboardChat fills all remaining height */}
           <div className="flex-1 flex flex-col">
             <DashboardChat
               userName={session.user.name ?? ""}
@@ -96,8 +96,7 @@ export default async function DashboardPage() {
           </div>
         </section>
 
-        {/* RIGHT — Sidebar with chart + recent transactions */}
-        <aside className="w-full lg:w-[340px] flex flex-col gap-6 shrink-0">
+        <aside className="w-full lg:w-[360px] flex flex-col gap-6 shrink-0">
           <ExpenseChart data={chartData} />
           <RecentTransactions transactions={transactions.slice(0, 5)} />
         </aside>
