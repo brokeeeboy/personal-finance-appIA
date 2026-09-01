@@ -5,6 +5,7 @@ import {
   extractDebtDueDate,
   getDebtReminderPrompt,
   isPositiveDebtConfirmation,
+  parseFinanceFallback,
 } from "../lib/chatHelpers";
 
 test("extractDebtDueDate parses a date from a debt message", () => {
@@ -49,4 +50,32 @@ test("getDebtReminderPrompt returns a reminder for a debt due tomorrow", () => {
 test("isPositiveDebtConfirmation matches payment confirmations", () => {
   assert.equal(isPositiveDebtConfirmation("si, ya lo pagué"), true);
   assert.equal(isPositiveDebtConfirmation("todavía no"), false);
+});
+
+test("parseFinanceFallback treats paying a credit card as a credit payment, not an expense", () => {
+  const result = parseFinanceFallback(
+    "pague 20000 credito",
+    [{ id: "acc-1", name: "Visa Platinum", type: "CREDIT" }],
+    [{ id: "cat-1", name: "Servicios" }],
+    [],
+  );
+
+  assert.equal(result.action, "transaction");
+  assert.equal(result.type, "INCOME");
+  assert.equal(result.accountId, "acc-1");
+  assert.equal(result.amount, 20000);
+});
+
+test("parseFinanceFallback treats a purchase with a credit card as an expense", () => {
+  const result = parseFinanceFallback(
+    "compré 25000 con la tarjeta de crédito",
+    [{ id: "acc-1", name: "Visa Platinum", type: "CREDIT" }],
+    [{ id: "cat-1", name: "Compras" }],
+    [],
+  );
+
+  assert.equal(result.action, "transaction");
+  assert.equal(result.type, "EXPENSE");
+  assert.equal(result.accountId, "acc-1");
+  assert.equal(result.amount, 25000);
 });

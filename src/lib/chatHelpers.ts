@@ -343,8 +343,38 @@ export function parseFinanceFallback(
   const matchedAccount = matchAccount(accounts, text) ?? accounts[0];
   const matchedCategory = matchCategory(categories, text) ?? categories[0];
   const matchedGoal = matchGoal(goals, text) ?? goals[0];
+  const creditTerms = /(credito|crédito|tarjeta|visa|mastercard)/;
+  const paymentVerb =
+    /(pagu(?:e|é|o)|abon(?:e|é)|cancel(?:e|é)|liquid(?:e|é)|pag(?:o|a))/;
+  const isCreditCardPayment = paymentVerb.test(text) && creditTerms.test(text);
+  const isCreditCardPurchase =
+    /(gast|compr|costo|consum|deuda)/.test(text) &&
+    creditTerms.test(text) &&
+    !paymentVerb.test(text);
 
-  if (/(gast|compr|pagu|costo|consum|deuda|se fue|se fue)/.test(text)) {
+  if (isCreditCardPayment) {
+    return {
+      action: "transaction",
+      amount,
+      description: description || "Pago a tarjeta de crédito",
+      type: "INCOME",
+      accountId: matchedAccount?.id,
+      categoryId: matchedCategory?.id,
+    };
+  }
+
+  if (isCreditCardPurchase) {
+    return {
+      action: "transaction",
+      amount,
+      description,
+      type: "EXPENSE",
+      accountId: matchedAccount?.id,
+      categoryId: matchedCategory?.id,
+    };
+  }
+
+  if (/(gast|compr|costo|consum|deuda|se fue|se fue)/.test(text)) {
     return {
       action: "transaction",
       amount,
