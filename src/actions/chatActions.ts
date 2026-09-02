@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
+import { getFinancialContext } from "@/lib/financialContext";
 import {
   parseFinanceFallback,
   extractDebtDueDate,
@@ -231,20 +232,8 @@ export async function processChatMessage(
     }
   }
 
-  const [accounts, categories, goals] = await Promise.all([
-    prisma.account.findMany({
-      where: { userId },
-      select: { id: true, name: true, type: true },
-    }),
-    prisma.category.findMany({
-      where: { userId },
-      select: { id: true, name: true },
-    }),
-    prisma.goal.findMany({
-      where: { userId },
-      select: { id: true, name: true },
-    }),
-  ]);
+  const financialContext = await getFinancialContext(userId);
+  const { accounts, categories, goals } = financialContext;
 
   if (accounts.length === 0) {
     return {
@@ -267,14 +256,8 @@ export async function processChatMessage(
 Eres un asistente financiero inteligente. Tu trabajo es interpretar el mensaje del usuario y extraer los datos en formato JSON para ejecutar una acción.
 Hoy es ${new Date().toLocaleDateString("es-CL")}.
 
-CUENTAS DEL USUARIO:
-${JSON.stringify(accounts)}
-
-CATEGORÍAS DEL USUARIO:
-${JSON.stringify(categories)}
-
-METAS DEL USUARIO:
-${JSON.stringify(goals)}
+CONTEXTO FINANCIERO ACTUAL DEL USUARIO:
+${JSON.stringify(financialContext)}
 
 HISTORIAL RECIENTE DE LA CONVERSACIÓN:
 ${JSON.stringify(history.slice(-8))}
@@ -285,12 +268,14 @@ REGLAS:
 3. Usa el historial para resolver referencias como "esa cuenta", "lo anterior" o "también". No inventes datos ni IDs.
 4. Si la acción es "transaction", devuelve: { "action": "transaction", "amount": numero, "description": string, "type": "EXPENSE" o "INCOME", "accountId": string (id exacto de la cuenta), "categoryId": string (id de la categoría más lógica, opcional) }
   - Si hay más de una cuenta posible y el usuario no especificó cuál, devuelve unknown y pregunta cuál cuenta usar.
+  - Para responder preguntas sobre gastos, ingresos, saldos o movimientos, usa recentTransactions y summary; no inventes cifras.
 5. Si la acción es "debt":
    - Si el usuario no dio una fecha de pago, devuelve: { "action": "debt", "type": "OWE_ME" o "I_OWE", "personName": string, "amount": numero, "description": string, "askForDueDate": true, "reply": "¿Para cuándo vence ese pago? Te lo guardo con fecha y te recordaré un día antes." }
    - Si sí dio la fecha, devuelve: { "action": "debt", "type": "OWE_ME" o "I_OWE", "personName": string, "amount": numero, "description": string, "dueDate": "ISO string" }
 6. Si la acción es "goal", devuelve: { "action": "goal", "goalId": string (id de la meta), "amount": numero }
 7. Si falta información crucial (como el monto, la cuenta o la meta), si hay ambigüedad o es una charla normal, devuelve: { "action": "unknown", "reply": "Una pregunta breve y amable para obtener exactamente el dato que falta" }.
-8. Nunca ejecutes ni confirmes una operación si todavía necesitas una aclaración.
+8. También puedes responder preguntas financieras usando el contexto, pero siempre devuelve action "unknown" y escribe la respuesta en reply; nunca inventes datos.
+9. Nunca ejecutes ni confirmes una operación si todavía necesitas una aclaración.
 `;
 
     const response = await fetch(`${aiBaseUrl}/chat/completions`, {
