@@ -79,3 +79,21 @@ test("parseFinanceFallback treats a purchase with a credit card as an expense", 
   assert.equal(result.accountId, "acc-1");
   assert.equal(result.amount, 25000);
 });
+
+test("parseFinanceFallback keeps transaction details while asking for an account", () => {
+  const result = parseFinanceFallback(
+    "gaste 800 en sushi",
+    [
+      { id: "cash-1", name: "Efectivo", type: "CHECKING" },
+      { id: "card-1", name: "Visa", type: "CREDIT" },
+    ],
+    [{ id: "cat-1", name: "Comida" }],
+    [],
+  );
+
+  assert.equal(result.action, "unknown");
+  assert.equal(result.amount, 800);
+  assert.equal(result.type, "EXPENSE");
+  assert.equal(result.description, "sushi");
+  assert.equal(result.reply, "¿En qué cuenta debo registrar este movimiento?");
+});

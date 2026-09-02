@@ -30,9 +30,10 @@ function cleanDescription(message: string) {
   return (
     message
       .replace(
-        /(?:gasté|gasto|gastado|compré|compré|compré|pagué|pago|me pagaron|ingresé|ingreso|ahorré|ahorro|presté|prestamos|prestamo|prestó|le presté|te presté)/gi,
+        /(?:gaste|gasté|gasto|gastado|compr[eé]|pagu[eé]|pago|me pagaron|ingres[eé]|ingreso|ahorr[eé]|ahorro|prest[eé]|prestamos|prestamo|prestó|le prest[eé]|te prest[eé])/gi,
         "",
       )
+      .replace(/\b\d+(?:[.,]\d{3})*(?:[.,]\d+)?\b/g, " ")
       .replace(
         /\b(?:con|por|en|de|mi|tu|a|al|la|el|para|hoy|ayer|hace|pago|pagando|con la|con el)\b/gi,
         " ",
@@ -81,6 +82,26 @@ function matchAccount(
   }
 
   return ranked[0] ?? accounts[0];
+}
+
+export function findMentionedAccount(
+  accounts: Array<{ id: string; name: string; type: string }>,
+  text: string,
+) {
+  const normalized = normalizeText(text);
+  const namedAccount = accounts.find((account) =>
+    normalized.includes(normalizeText(account.name)),
+  );
+
+  if (namedAccount) return namedAccount;
+
+  if (/\b(?:efectivo|cash)\b/.test(normalized)) {
+    return accounts.find((account) =>
+      /\b(?:efectivo|cash)\b/.test(normalizeText(account.name)),
+    );
+  }
+
+  return undefined;
 }
 
 function matchCategory(
@@ -169,6 +190,18 @@ const pendingDebtDrafts = new Map<
     amount: number;
     description: string;
   }
+>();
+
+export type PendingTransactionDraft = {
+  amount: number;
+  description: string;
+  type: string;
+  categoryId?: string;
+};
+
+export const pendingTransactionDrafts = new Map<
+  string,
+  PendingTransactionDraft
 >();
 
 function getMonthNumber(value: string) {
@@ -364,6 +397,12 @@ export function parseFinanceFallback(
   if (isTransactionIntent && accounts.length > 1 && !mentionsAccount) {
     return {
       action: "unknown",
+      amount,
+      description,
+      type: /(gast|compr|costo|consum|deuda|se fue)/.test(text)
+        ? "EXPENSE"
+        : "INCOME",
+      categoryId: matchedCategory?.id,
       reply: "¿En qué cuenta debo registrar este movimiento?",
     };
   }

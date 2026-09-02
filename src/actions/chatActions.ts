@@ -10,7 +10,9 @@ import {
   extractDebtDueDate,
   getDebtReminderPrompt,
   isPositiveDebtConfirmation,
+  findMentionedAccount,
   pendingDebtDrafts,
+  pendingTransactionDrafts,
 } from "@/lib/chatHelpers";
 
 export type ChatHistoryMessage = {
@@ -242,7 +244,39 @@ export async function processChatMessage(
     };
   }
 
+  const pendingTransaction = pendingTransactionDrafts.get(userId);
+  if (pendingTransaction) {
+    const account = findMentionedAccount(accounts, message);
+    if (account) {
+      pendingTransactionDrafts.delete(userId);
+      return await executeParsedAction(
+        { action: "transaction", ...pendingTransaction, accountId: account.id },
+        userId,
+        accounts,
+      );
+    }
+
+    return { reply: "¿En qué cuenta debo registrar este movimiento?" };
+  }
+
   const fallback = parseFinanceFallback(message, accounts, categories, goals);
+
+  if (
+    fallback.action === "unknown" &&
+    fallback.reply === "¿En qué cuenta debo registrar este movimiento?" &&
+    typeof fallback.amount === "number" &&
+    typeof fallback.description === "string" &&
+    typeof fallback.type === "string"
+  ) {
+    pendingTransactionDrafts.set(userId, {
+      amount: fallback.amount,
+      description: fallback.description,
+      type: fallback.type,
+      categoryId: fallback.categoryId,
+    });
+
+    return { reply: fallback.reply };
+  }
 
   try {
     const apiKey = process.env.AI_API_KEY;
