@@ -41,7 +41,16 @@ export default async function AccountsPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {accounts.map((account) => (
-              <AccountCard key={account.id} account={account} />
+              <AccountCard
+                key={account.id}
+                account={{
+                  ...account,
+                  balance: Number(account.balance),
+                  creditLimit: account.creditLimit
+                    ? Number(account.creditLimit)
+                    : null,
+                }}
+              />
             ))}
           </div>
         )}

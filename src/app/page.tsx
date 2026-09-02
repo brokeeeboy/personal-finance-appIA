@@ -22,7 +22,7 @@ export default async function DashboardPage() {
     where: { userId: session.user.id },
   });
   const totalBalance = accounts.reduce(
-    (acc: number, account: { balance: number }) => acc + account.balance,
+    (acc: number, account) => acc + Number(account.balance),
     0,
   );
 
@@ -46,10 +46,11 @@ export default async function DashboardPage() {
     {};
 
   transactions.forEach((t) => {
+    const amount = Number(t.amount);
     if (t.type === "INCOME") {
-      monthlyIncome += t.amount;
+      monthlyIncome += amount;
     } else {
-      monthlyExpenses += t.amount;
+      monthlyExpenses += amount;
       if (t.category) {
         if (!expensesByCategory[t.category.name]) {
           expensesByCategory[t.category.name] = {
@@ -57,7 +58,7 @@ export default async function DashboardPage() {
             color: t.category.color || "#6366f1",
           };
         }
-        expensesByCategory[t.category.name].value += t.amount;
+        expensesByCategory[t.category.name].value += amount;
       }
     }
   });
@@ -98,7 +99,12 @@ export default async function DashboardPage() {
 
         <aside className="w-full lg:w-[360px] flex flex-col gap-6 shrink-0">
           <ExpenseChart data={chartData} />
-          <RecentTransactions transactions={transactions.slice(0, 5)} />
+          <RecentTransactions
+            transactions={transactions.slice(0, 5).map((transaction) => ({
+              ...transaction,
+              amount: Number(transaction.amount),
+            }))}
+          />
         </aside>
       </main>
     </div>

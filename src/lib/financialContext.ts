@@ -71,10 +71,10 @@ export async function getFinancialContext(userId: string) {
 
   const incomeTotal = transactions
     .filter((transaction) => transaction.type === "INCOME")
-    .reduce((total, transaction) => total + transaction.amount, 0);
+    .reduce((total, transaction) => total + Number(transaction.amount), 0);
   const expenseTotal = transactions
     .filter((transaction) => transaction.type === "EXPENSE")
-    .reduce((total, transaction) => total + transaction.amount, 0);
+    .reduce((total, transaction) => total + Number(transaction.amount), 0);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -82,7 +82,7 @@ export async function getFinancialContext(userId: string) {
     summary: {
       accountCount: accounts.length,
       totalBalance: accounts.reduce(
-        (total, account) => total + account.balance,
+        (total, account) => total + Number(account.balance),
         0,
       ),
       recentIncomeTotal: incomeTotal,
@@ -93,8 +93,19 @@ export async function getFinancialContext(userId: string) {
     },
     accounts,
     categories,
-    recentTransactions: transactions,
-    debts,
-    goals,
+    recentTransactions: transactions.map((transaction) => ({
+      ...transaction,
+      amount: Number(transaction.amount),
+    })),
+    debts: debts.map((debt) => ({ ...debt, amount: Number(debt.amount) })),
+    goals: goals.map((goal) => ({
+      ...goal,
+      targetAmount: Number(goal.targetAmount),
+      currentAmount: Number(goal.currentAmount),
+      contributions: goal.contributions.map((contribution) => ({
+        ...contribution,
+        amount: Number(contribution.amount),
+      })),
+    })),
   };
 }

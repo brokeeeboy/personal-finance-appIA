@@ -22,12 +22,12 @@ export default async function DebtsPage() {
 
   debts
     .filter(
-      (d: { status: string; type: string; amount: number }) =>
+      (d: { status: string; type: string; amount: unknown }) =>
         d.status === "PENDING",
     )
-    .forEach((d: { status: string; type: string; amount: number }) => {
-      if (d.type === "OWE_ME") oweMeTotal += d.amount;
-      else iOweTotal += d.amount;
+    .forEach((d: { status: string; type: string; amount: unknown }) => {
+      if (d.type === "OWE_ME") oweMeTotal += Number(d.amount);
+      else iOweTotal += Number(d.amount);
     });
 
   const balance = oweMeTotal - iOweTotal;
@@ -117,7 +117,10 @@ export default async function DebtsPage() {
                 {debts
                   .filter((d) => d.type === "OWE_ME")
                   .map((debt) => (
-                    <DebtCard key={debt.id} debt={debt} />
+                    <DebtCard
+                      key={debt.id}
+                      debt={{ ...debt, amount: Number(debt.amount) }}
+                    />
                   ))}
               </div>
             </div>
@@ -134,7 +137,10 @@ export default async function DebtsPage() {
                 {debts
                   .filter((d) => d.type === "I_OWE")
                   .map((debt) => (
-                    <DebtCard key={debt.id} debt={debt} />
+                    <DebtCard
+                      key={debt.id}
+                      debt={{ ...debt, amount: Number(debt.amount) }}
+                    />
                   ))}
               </div>
             </div>

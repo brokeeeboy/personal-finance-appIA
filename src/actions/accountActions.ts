@@ -4,25 +4,34 @@ import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
+import { Prisma } from "@prisma/client";
+import { accountInputSchema, parseFormString } from "@/lib/validation";
 
 export async function createAccount(formData: FormData) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) throw new Error("No autorizado");
 
-  const name = formData.get("name") as string;
-  const type = formData.get("type") as string;
-  const bankName = formData.get("bankName") as string;
-  const balance = parseFloat(formData.get("balance") as string) || 0;
-  const lastFour = formData.get("lastFour") as string | null;
-  const creditLimit = formData.get("creditLimit")
-    ? parseFloat(formData.get("creditLimit") as string)
-    : null;
-  const billingDay = formData.get("billingDay")
-    ? Number(formData.get("billingDay"))
-    : null;
-  const paymentDay = formData.get("paymentDay")
-    ? Number(formData.get("paymentDay"))
-    : null;
+  const parsed = accountInputSchema.safeParse({
+    name: parseFormString(formData.get("name")),
+    type: parseFormString(formData.get("type")),
+    bankName: parseFormString(formData.get("bankName")) || undefined,
+    balance: formData.get("balance") || 0,
+    lastFour: parseFormString(formData.get("lastFour")) || undefined,
+    creditLimit: formData.get("creditLimit") || undefined,
+    billingDay: formData.get("billingDay") || undefined,
+    paymentDay: formData.get("paymentDay") || undefined,
+  });
+  if (!parsed.success) throw new Error("Datos de cuenta inválidos");
+  const {
+    name,
+    type,
+    bankName,
+    balance,
+    lastFour,
+    creditLimit,
+    billingDay,
+    paymentDay,
+  } = parsed.data;
 
   await prisma.account.create({
     data: {
@@ -30,11 +39,12 @@ export async function createAccount(formData: FormData) {
       name,
       type,
       bankName,
-      balance,
-      lastFour: lastFour ? lastFour.slice(0, 4) : null,
-      creditLimit,
-      billingDay: type === "CREDIT" ? billingDay : null,
-      paymentDay: type === "CREDIT" ? paymentDay : null,
+      balance: new Prisma.Decimal(balance),
+      lastFour: lastFour || null,
+      creditLimit:
+        creditLimit === undefined ? null : new Prisma.Decimal(creditLimit),
+      billingDay: type === "CREDIT" ? (billingDay ?? null) : null,
+      paymentDay: type === "CREDIT" ? (paymentDay ?? null) : null,
     },
   });
 

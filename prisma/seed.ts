@@ -4,6 +4,14 @@ import bcrypt from "bcryptjs";
 async function main() {
   console.log("Iniciando seed...");
 
+  const adminEmail = process.env.SEED_ADMIN_EMAIL?.trim().toLowerCase();
+  const adminPassword = process.env.SEED_ADMIN_PASSWORD;
+  if (!adminEmail || !adminPassword) {
+    throw new Error(
+      "SEED_ADMIN_EMAIL y SEED_ADMIN_PASSWORD son obligatorios para ejecutar el seed",
+    );
+  }
+
   // 1. Limpiar base de datos (cuidado en producción, esto es solo para el seed local)
   await prisma.goalContribution.deleteMany();
   await prisma.goal.deleteMany();
@@ -15,10 +23,10 @@ async function main() {
   await prisma.user.deleteMany();
 
   // 2. Crear usuario
-  const hashedPassword = await bcrypt.hash("123456", 10);
+  const hashedPassword = await bcrypt.hash(adminPassword, 10);
   const user = await prisma.user.create({
     data: {
-      email: "admin@portafolio.com",
+      email: adminEmail,
       name: "Usuario Demo",
       password: hashedPassword,
       role: "ADMIN",

@@ -4,27 +4,32 @@ import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth"; // Corregido a lib/auth
 import { revalidatePath } from "next/cache";
+import { Prisma } from "@prisma/client";
+import { goalInputSchema, parseFormString } from "@/lib/validation";
 
 export async function createGoal(formData: FormData) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) throw new Error("No autorizado");
 
-  const name = formData.get("name") as string;
-  const targetAmount = parseFloat(formData.get("targetAmount") as string);
-  const targetDateStr = formData.get("targetDate") as string;
-  const initialAmount =
-    parseFloat(formData.get("initialAmount") as string) || 0;
+  const parsed = goalInputSchema.safeParse({
+    name: parseFormString(formData.get("name")),
+    targetAmount: formData.get("targetAmount"),
+    targetDate: parseFormString(formData.get("targetDate")) || undefined,
+    initialAmount: formData.get("initialAmount") || 0,
+  });
+  if (!parsed.success) throw new Error("Datos de meta inválidos");
+  const { name, targetAmount, targetDate, initialAmount } = parsed.data;
 
   await prisma.goal.create({
     data: {
       userId: session.user.id,
       name,
-      targetAmount,
-      currentAmount: initialAmount,
-      targetDate: targetDateStr ? new Date(targetDateStr) : null,
+      targetAmount: new Prisma.Decimal(targetAmount),
+      currentAmount: new Prisma.Decimal(initialAmount),
+      targetDate: targetDate ?? null,
       ...(initialAmount > 0 && {
         contributions: {
-          create: { amount: initialAmount },
+          create: { amount: new Prisma.Decimal(initialAmount) },
         },
       }),
     },
@@ -38,23 +43,26 @@ export async function addContribution(formData: FormData) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) throw new Error("No autorizado");
 
-  const goalId = formData.get("goalId") as string;
-  const amount = parseFloat(formData.get("amount") as string);
+  const goalId = parseFormString(formData.get("goalId"));
+  const amount = Number(formData.get("amount"));
+  if (!goalId || !Number.isFinite(amount) || amount <= 0) {
+    throw new Error("Datos de aporte inválidos");
+  }
 
   await prisma.$transaction(async (tx) => {
     // 1. Crear el registro de la contribución
     await tx.goalContribution.create({
-      data: { goalId, amount },
+      data: { goalId, amount: new Prisma.Decimal(amount) },
     });
 
-    // 2. Actualizar el monto actual de la meta
-    const goal = await tx.goal.findUnique({ where: { id: goalId } });
-    if (goal) {
-      await tx.goal.update({
-        where: { id: goalId },
-        data: { currentAmount: goal.currentAmount + amount },
-      });
-    }
+    const goal = await tx.goal.findFirst({
+      where: { id: goalId, userId: session.user.id },
+    });
+    if (!goal) throw new Error("Meta no encontrada");
+    await tx.goal.update({
+      where: { id: goalId },
+      data: { currentAmount: { increment: new Prisma.Decimal(amount) } },
+    });
   });
 
   revalidatePath("/metas");

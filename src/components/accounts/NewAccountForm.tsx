@@ -14,10 +14,16 @@ export default function NewAccountForm() {
     setIsPending(true);
     const formData = new FormData(e.currentTarget);
 
-    await createAccount(formData);
-
-    setIsPending(false);
-    setIsOpen(false);
+    try {
+      await createAccount(formData);
+      setIsOpen(false);
+    } catch {
+      alert(
+        "No se pudo crear la cuenta. Revisa los datos e inténtalo de nuevo.",
+      );
+    } finally {
+      setIsPending(false);
+    }
   };
 
   return (

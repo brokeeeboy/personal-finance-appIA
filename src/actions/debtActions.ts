@@ -4,16 +4,22 @@ import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth"; // Corregido para usar lib/auth
 import { revalidatePath } from "next/cache";
+import { Prisma } from "@prisma/client";
+import { debtInputSchema, parseFormString } from "@/lib/validation";
 
 export async function createDebt(formData: FormData) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) throw new Error("No autorizado");
 
-  const type = formData.get("type") as string;
-  const personName = formData.get("personName") as string;
-  const description = formData.get("description") as string;
-  const amount = parseFloat(formData.get("amount") as string);
-  const dueDateStr = formData.get("dueDate") as string;
+  const parsed = debtInputSchema.safeParse({
+    type: parseFormString(formData.get("type")),
+    personName: parseFormString(formData.get("personName")),
+    description: parseFormString(formData.get("description")) || undefined,
+    amount: formData.get("amount"),
+    dueDate: parseFormString(formData.get("dueDate")) || undefined,
+  });
+  if (!parsed.success) throw new Error("Datos de deuda inválidos");
+  const { type, personName, description, amount, dueDate } = parsed.data;
 
   await prisma.debt.create({
     data: {
@@ -21,9 +27,9 @@ export async function createDebt(formData: FormData) {
       type,
       personName,
       description,
-      amount,
+      amount: new Prisma.Decimal(amount),
       status: "PENDING",
-      dueDate: dueDateStr ? new Date(dueDateStr) : null,
+      dueDate: dueDate ?? null,
     },
   });
 

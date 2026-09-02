@@ -86,7 +86,12 @@ export default async function TransactionsPage({
           </div>
         </div>
 
-        <TransactionTable transactions={transactions} />
+        <TransactionTable
+          transactions={transactions.map((transaction) => ({
+            ...transaction,
+            amount: Number(transaction.amount),
+          }))}
+        />
       </main>
     </div>
   );

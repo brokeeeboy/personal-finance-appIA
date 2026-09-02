@@ -14,6 +14,7 @@ import {
   pendingDebtDrafts,
   pendingTransactionDrafts,
 } from "@/lib/chatHelpers";
+import { aiActionSchema } from "@/lib/validation";
 
 export type ChatHistoryMessage = {
   role: "user" | "ai";
@@ -53,9 +54,14 @@ async function executeParsedAction(
     const description = parsed.description;
     const type = parsed.type;
 
-    const account =
-      accounts.find((item) => item.id === parsed.accountId) ?? accounts[0];
+    const account = accounts.find((item) => item.id === parsed.accountId);
     if (!account) throw new Error("Cuenta no encontrada");
+    if (parsed.categoryId) {
+      const category = await prisma.category.findFirst({
+        where: { id: parsed.categoryId, userId },
+      });
+      if (!category) throw new Error("Categoría no encontrada");
+    }
 
     await prisma.$transaction(async (tx) => {
       await tx.transaction.create({
@@ -145,12 +151,17 @@ async function executeParsedAction(
       return { reply: "¿A qué meta y por qué monto quieres hacer el aporte?" };
     }
 
+    const goal = await prisma.goal.findFirst({
+      where: { id: parsed.goalId, userId },
+      select: { id: true },
+    });
+    if (!goal) return { reply: "Meta no encontrada." };
     await prisma.$transaction([
       prisma.goalContribution.create({
-        data: { goalId: parsed.goalId, amount: parsed.amount },
+        data: { goalId: goal.id, amount: parsed.amount },
       }),
       prisma.goal.update({
-        where: { id: parsed.goalId },
+        where: { id: goal.id },
         data: { currentAmount: { increment: parsed.amount } },
       }),
     ]);
@@ -177,6 +188,10 @@ export async function processChatMessage(
   if (!session?.user?.id) throw new Error("No autorizado");
 
   const userId = session.user.id;
+
+  if (message.trim().length === 0 || message.length > 500) {
+    return { reply: "Escribe un mensaje de hasta 500 caracteres." };
+  }
 
   const draft = pendingDebtDrafts.get(userId);
   if (draft) {
@@ -214,7 +229,11 @@ export async function processChatMessage(
         dueDate: true,
       },
     })
-    .then((debts) => getDebtReminderPrompt(debts));
+    .then((debts) =>
+      getDebtReminderPrompt(
+        debts.map((debt) => ({ ...debt, amount: Number(debt.amount) })),
+      ),
+    );
 
   if (debtReminder && isPositiveDebtConfirmation(message)) {
     const upcomingDebt = await prisma.debt.findFirst({
@@ -261,28 +280,25 @@ export async function processChatMessage(
 
   const fallback = parseFinanceFallback(message, accounts, categories, goals);
 
-  if (
-    fallback.action === "unknown" &&
-    fallback.reply === "¿En qué cuenta debo registrar este movimiento?" &&
-    typeof fallback.amount === "number" &&
-    typeof fallback.description === "string" &&
-    typeof fallback.type === "string"
-  ) {
-    pendingTransactionDrafts.set(userId, {
-      amount: fallback.amount,
-      description: fallback.description,
-      type: fallback.type,
-      categoryId: fallback.categoryId,
-    });
-
-    return { reply: fallback.reply };
-  }
-
   try {
     const apiKey = process.env.AI_API_KEY;
     const aiBaseUrl = process.env.AI_BASE_URL;
 
     if (!apiKey || !aiBaseUrl) {
+      if (
+        fallback.action === "unknown" &&
+        fallback.reply === "¿En qué cuenta debo registrar este movimiento?" &&
+        typeof fallback.amount === "number" &&
+        typeof fallback.description === "string" &&
+        typeof fallback.type === "string"
+      ) {
+        pendingTransactionDrafts.set(userId, {
+          amount: fallback.amount,
+          description: fallback.description,
+          type: fallback.type,
+          categoryId: fallback.categoryId,
+        });
+      }
       return await executeParsedAction(fallback, userId, accounts);
     }
 
@@ -312,26 +328,33 @@ REGLAS:
 9. Nunca ejecutes ni confirmes una operación si todavía necesitas una aclaración.
 `;
 
-    const response = await fetch(`${aiBaseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    const response = await fetch(
+      `${aiBaseUrl.replace(/\/$/, "")}/chat/completions`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: "deepseek-chat",
+          messages: [
+            { role: "system", content: systemPrompt },
+            ...history.slice(-8).map((item) => ({
+              role:
+                item.role === "ai" ? ("assistant" as const) : ("user" as const),
+              content: item.text,
+            })),
+            { role: "user", content: message },
+          ],
+          temperature: 0.1,
+        }),
+        signal: controller.signal,
       },
-      body: JSON.stringify({
-        model: "deepseek-chat",
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...history.slice(-8).map((item) => ({
-            role:
-              item.role === "ai" ? ("assistant" as const) : ("user" as const),
-            content: item.text,
-          })),
-          { role: "user", content: message },
-        ],
-        temperature: 0.1,
-      }),
-    });
+    );
+    clearTimeout(timeout);
 
     if (!response.ok) {
       console.error("AI request failed:", response.status, response.statusText);
@@ -352,14 +375,33 @@ REGLAS:
 
     let parsed: ParsedAction;
     try {
-      parsed = JSON.parse(jsonStr);
+      const candidate = aiActionSchema.parse(JSON.parse(jsonStr));
+      parsed = candidate;
     } catch {
       return await executeParsedAction(fallback, userId, accounts);
     }
 
+    if (
+      parsed.action === "unknown" &&
+      parsed.reply === "¿En qué cuenta debo registrar este movimiento?" &&
+      typeof parsed.amount === "number" &&
+      typeof parsed.description === "string" &&
+      typeof parsed.type === "string"
+    ) {
+      pendingTransactionDrafts.set(userId, {
+        amount: parsed.amount,
+        description: parsed.description,
+        type: parsed.type,
+        categoryId: parsed.categoryId,
+      });
+    }
+
     return await executeParsedAction(parsed, userId, accounts);
   } catch (error) {
-    console.error("Error AI:", error);
+    console.error(
+      "Error en proveedor de IA:",
+      error instanceof Error ? error.name : "unknown",
+    );
     return await executeParsedAction(fallback, userId, accounts);
   }
 }

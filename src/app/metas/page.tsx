@@ -17,8 +17,7 @@ export default async function GoalsPage() {
   });
 
   const completedGoals = goals.filter(
-    (g: { currentAmount: number; targetAmount: number }) =>
-      g.currentAmount >= g.targetAmount,
+    (goal) => Number(goal.currentAmount) >= Number(goal.targetAmount),
   ).length;
   const totalGoals = goals.length;
 
@@ -60,7 +59,14 @@ export default async function GoalsPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {goals.map((goal) => (
-              <GoalCard key={goal.id} goal={goal} />
+              <GoalCard
+                key={goal.id}
+                goal={{
+                  ...goal,
+                  targetAmount: Number(goal.targetAmount),
+                  currentAmount: Number(goal.currentAmount),
+                }}
+              />
             ))}
           </div>
         )}

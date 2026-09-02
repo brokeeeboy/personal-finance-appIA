@@ -1,20 +1,27 @@
 "use server";
 
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
+import { parseFormString, transactionInputSchema } from "@/lib/validation";
 
 export async function createTransaction(formData: FormData) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) throw new Error("No autorizado");
 
-  const description = formData.get("description") as string;
-  const amount = parseFloat(formData.get("amount") as string);
-  const type = formData.get("type") as string;
-  const dateStr = formData.get("date") as string;
-  const accountId = formData.get("accountId") as string;
-  const categoryId = formData.get("categoryId") as string;
+  const parsed = transactionInputSchema.safeParse({
+    description: parseFormString(formData.get("description")),
+    amount: formData.get("amount"),
+    type: parseFormString(formData.get("type")),
+    date: formData.get("date"),
+    accountId: parseFormString(formData.get("accountId")),
+    categoryId: parseFormString(formData.get("categoryId")) || undefined,
+  });
+  if (!parsed.success) throw new Error("Datos de transacción inválidos");
+  const { description, amount, type, date, accountId, categoryId } =
+    parsed.data;
 
   await prisma.$transaction(async (tx) => {
     // 1. Crear transacción
@@ -22,23 +29,30 @@ export async function createTransaction(formData: FormData) {
       data: {
         userId: session.user.id,
         description,
-        amount,
+        amount: new Prisma.Decimal(amount),
         type,
-        date: new Date(dateStr),
+        date,
         accountId,
         categoryId: categoryId || null,
       },
     });
 
     // 2. Actualizar saldo de la cuenta
-    const account = await tx.account.findUnique({ where: { id: accountId } });
-    if (account) {
-      const balanceChange = type === "INCOME" ? amount : -amount;
-      await tx.account.update({
-        where: { id: accountId },
-        data: { balance: account.balance + balanceChange },
+    const account = await tx.account.findFirst({
+      where: { id: accountId, userId: session.user.id },
+    });
+    if (!account) throw new Error("Cuenta no encontrada");
+    if (categoryId) {
+      const category = await tx.category.findFirst({
+        where: { id: categoryId, userId: session.user.id },
       });
+      if (!category) throw new Error("Categoría no encontrada");
     }
+    const balanceChange = type === "INCOME" ? amount : -amount;
+    await tx.account.update({
+      where: { id: accountId },
+      data: { balance: { increment: balanceChange } },
+    });
   });
 
   revalidatePath("/transacciones");
@@ -61,19 +75,14 @@ export async function deleteTransaction(id: string) {
     await tx.transaction.delete({ where: { id } });
 
     // 3. Restaurar saldo de la cuenta
-    const account = await tx.account.findUnique({
-      where: { id: transaction.accountId },
+    const balanceChange =
+      transaction.type === "INCOME"
+        ? transaction.amount.negated()
+        : transaction.amount;
+    await tx.account.update({
+      where: { id: transaction.accountId, userId: session.user.id },
+      data: { balance: { increment: balanceChange } },
     });
-    if (account) {
-      const balanceChange =
-        transaction.type === "INCOME"
-          ? -transaction.amount
-          : transaction.amount;
-      await tx.account.update({
-        where: { id: transaction.accountId },
-        data: { balance: account.balance + balanceChange },
-      });
-    }
   });
 
   revalidatePath("/transacciones");

@@ -17,64 +17,14 @@ export const authOptions: NextAuthOptions = {
         const email = String(credentials.email).trim().toLowerCase();
         const password = String(credentials.password).trim();
 
-        let user = await prisma.user.findUnique({
+        const user = await prisma.user.findUnique({
           where: { email },
         });
-
-        const isDefaultAdmin =
-          email === "admin@portafolio.com" && password === "123456";
-
-        if (
-          isDefaultAdmin &&
-          (!user || !user.password || user.role !== "ADMIN")
-        ) {
-          const hashedPassword = await bcrypt.hash(password, 10);
-
-          user = await prisma.user.upsert({
-            where: { email },
-            update: {
-              name: "Usuario Demo",
-              password: hashedPassword,
-              role: "ADMIN",
-            },
-            create: {
-              email,
-              name: "Usuario Demo",
-              password: hashedPassword,
-              role: "ADMIN",
-            },
-          });
-        }
 
         if (!user || !user.password) return null;
 
         const isValid = await bcrypt.compare(password, user.password);
-        if (!isValid) {
-          if (isDefaultAdmin) {
-            const hashedPassword = await bcrypt.hash(password, 10);
-            user = await prisma.user.upsert({
-              where: { email },
-              update: {
-                name: "Usuario Demo",
-                password: hashedPassword,
-                role: "ADMIN",
-              },
-              create: {
-                email,
-                name: "Usuario Demo",
-                password: hashedPassword,
-                role: "ADMIN",
-              },
-            });
-            return {
-              id: user.id,
-              email: user.email,
-              name: user.name ?? user.email,
-              role: user.role,
-            };
-          }
-          return null;
-        }
+        if (!isValid) return null;
 
         return {
           id: user.id,
@@ -101,8 +51,11 @@ export const authOptions: NextAuthOptions = {
     async session({ session, token }) {
       if (session.user) {
         session.user.id = token.id as string;
-        const role = (token.role as "ADMIN" | "USER" | undefined) ?? "USER";
-        session.user.role = role;
+        const currentUser = await prisma.user.findUnique({
+          where: { id: session.user.id },
+          select: { role: true },
+        });
+        session.user.role = currentUser?.role ?? "USER";
       }
       return session;
     },
