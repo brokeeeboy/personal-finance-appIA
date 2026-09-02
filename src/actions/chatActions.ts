@@ -12,12 +12,44 @@ import {
   pendingDebtDrafts,
 } from "@/lib/chatHelpers";
 
+export type ChatHistoryMessage = {
+  role: "user" | "ai";
+  text: string;
+};
+
+type ParsedAction = {
+  action: string;
+  amount?: number;
+  description?: string;
+  type?: string;
+  accountId?: string;
+  categoryId?: string;
+  personName?: string;
+  askForDueDate?: boolean;
+  dueDate?: string;
+  goalId?: string;
+  reply?: string;
+};
+
 async function executeParsedAction(
-  parsed: any,
+  parsed: ParsedAction,
   userId: string,
   accounts: Array<{ id: string; name: string; type: string }>,
 ) {
   if (parsed.action === "transaction") {
+    if (
+      typeof parsed.amount !== "number" ||
+      typeof parsed.description !== "string" ||
+      typeof parsed.type !== "string"
+    ) {
+      return {
+        reply: "¿Qué monto, descripción y tipo de movimiento debo registrar?",
+      };
+    }
+    const amount = parsed.amount;
+    const description = parsed.description;
+    const type = parsed.type;
+
     const account =
       accounts.find((item) => item.id === parsed.accountId) ?? accounts[0];
     if (!account) throw new Error("Cuenta no encontrada");
@@ -26,9 +58,9 @@ async function executeParsedAction(
       await tx.transaction.create({
         data: {
           userId,
-          description: parsed.description,
-          amount: parsed.amount,
-          type: parsed.type,
+          description,
+          amount,
+          type,
           date: new Date(),
           accountId: account.id,
           categoryId: parsed.categoryId || null,
@@ -36,8 +68,7 @@ async function executeParsedAction(
         },
       });
 
-      let balanceChange =
-        parsed.type === "INCOME" ? parsed.amount : -parsed.amount;
+      let balanceChange = type === "INCOME" ? amount : -amount;
       if (account.type === "CREDIT") balanceChange = -balanceChange;
 
       await tx.account.update({
@@ -54,7 +85,12 @@ async function executeParsedAction(
 
   if (parsed.action === "debt") {
     if (parsed.askForDueDate || !parsed.dueDate) {
-      if (parsed.personName && parsed.amount > 0) {
+      if (
+        parsed.personName &&
+        typeof parsed.amount === "number" &&
+        parsed.amount > 0 &&
+        typeof parsed.type === "string"
+      ) {
         pendingDebtDrafts.set(userId, {
           type: parsed.type,
           personName: parsed.personName,
@@ -68,6 +104,14 @@ async function executeParsedAction(
           parsed.reply ||
           "¿Para cuándo vence ese pago? Te lo guardo con fecha y te recordaré un día antes.",
       };
+    }
+
+    if (
+      typeof parsed.type !== "string" ||
+      typeof parsed.personName !== "string" ||
+      typeof parsed.amount !== "number"
+    ) {
+      return { reply: "¿A quién corresponde la deuda y cuál es el monto?" };
     }
 
     await prisma.debt.create({
@@ -91,6 +135,13 @@ async function executeParsedAction(
   }
 
   if (parsed.action === "goal") {
+    if (
+      typeof parsed.goalId !== "string" ||
+      typeof parsed.amount !== "number"
+    ) {
+      return { reply: "¿A qué meta y por qué monto quieres hacer el aporte?" };
+    }
+
     await prisma.$transaction([
       prisma.goalContribution.create({
         data: { goalId: parsed.goalId, amount: parsed.amount },
@@ -115,7 +166,10 @@ async function executeParsedAction(
   return { reply: "Entendí el mensaje, pero no supe qué acción ejecutar." };
 }
 
-export async function processChatMessage(message: string) {
+export async function processChatMessage(
+  message: string,
+  history: ChatHistoryMessage[] = [],
+) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) throw new Error("No autorizado");
 
@@ -222,15 +276,21 @@ ${JSON.stringify(categories)}
 METAS DEL USUARIO:
 ${JSON.stringify(goals)}
 
+HISTORIAL RECIENTE DE LA CONVERSACIÓN:
+${JSON.stringify(history.slice(-8))}
+
 REGLAS:
 1. Responde ÚNICAMENTE con un objeto JSON válido. Nada de texto antes o después.
 2. Identifica la "action": puede ser "transaction", "debt", "goal", o "unknown".
-3. Si la acción es "transaction", devuelve: { "action": "transaction", "amount": numero, "description": string, "type": "EXPENSE" o "INCOME", "accountId": string (id exacto de la cuenta), "categoryId": string (id de la categoría más lógica, opcional) }
-4. Si la acción es "debt":
+3. Usa el historial para resolver referencias como "esa cuenta", "lo anterior" o "también". No inventes datos ni IDs.
+4. Si la acción es "transaction", devuelve: { "action": "transaction", "amount": numero, "description": string, "type": "EXPENSE" o "INCOME", "accountId": string (id exacto de la cuenta), "categoryId": string (id de la categoría más lógica, opcional) }
+  - Si hay más de una cuenta posible y el usuario no especificó cuál, devuelve unknown y pregunta cuál cuenta usar.
+5. Si la acción es "debt":
    - Si el usuario no dio una fecha de pago, devuelve: { "action": "debt", "type": "OWE_ME" o "I_OWE", "personName": string, "amount": numero, "description": string, "askForDueDate": true, "reply": "¿Para cuándo vence ese pago? Te lo guardo con fecha y te recordaré un día antes." }
    - Si sí dio la fecha, devuelve: { "action": "debt", "type": "OWE_ME" o "I_OWE", "personName": string, "amount": numero, "description": string, "dueDate": "ISO string" }
-5. Si la acción es "goal", devuelve: { "action": "goal", "goalId": string (id de la meta), "amount": numero }
-6. Si falta información crucial (como el monto o a qué cuenta va) o es una charla normal, devuelve: { "action": "unknown", "reply": "Tu respuesta amigable preguntando qué falta o conversando" }
+6. Si la acción es "goal", devuelve: { "action": "goal", "goalId": string (id de la meta), "amount": numero }
+7. Si falta información crucial (como el monto, la cuenta o la meta), si hay ambigüedad o es una charla normal, devuelve: { "action": "unknown", "reply": "Una pregunta breve y amable para obtener exactamente el dato que falta" }.
+8. Nunca ejecutes ni confirmes una operación si todavía necesitas una aclaración.
 `;
 
     const response = await fetch(`${aiBaseUrl}/chat/completions`, {
@@ -243,6 +303,11 @@ REGLAS:
         model: "deepseek-chat",
         messages: [
           { role: "system", content: systemPrompt },
+          ...history.slice(-8).map((item) => ({
+            role:
+              item.role === "ai" ? ("assistant" as const) : ("user" as const),
+            content: item.text,
+          })),
           { role: "user", content: message },
         ],
         temperature: 0.1,
@@ -266,7 +331,7 @@ REGLAS:
       .replace(/```/g, "")
       .trim();
 
-    let parsed;
+    let parsed: ParsedAction;
     try {
       parsed = JSON.parse(jsonStr);
     } catch {

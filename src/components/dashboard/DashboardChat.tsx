@@ -11,7 +11,10 @@ import {
   Wallet,
   Zap,
 } from "lucide-react";
-import { processChatMessage } from "@/actions/chatActions";
+import {
+  processChatMessage,
+  type ChatHistoryMessage,
+} from "@/actions/chatActions";
 
 type Message = { role: "user" | "ai"; text: string };
 
@@ -57,7 +60,8 @@ export default function DashboardChat({
     setIsLoading(true);
 
     try {
-      const response = await processChatMessage(text);
+      const history: ChatHistoryMessage[] = messages.slice(-8);
+      const response = await processChatMessage(text, history);
       setMessages((prev) => [...prev, { role: "ai", text: response.reply }]);
     } catch {
       setMessages((prev) => [

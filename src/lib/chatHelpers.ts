@@ -351,6 +351,22 @@ export function parseFinanceFallback(
     /(gast|compr|costo|consum|deuda)/.test(text) &&
     creditTerms.test(text) &&
     !paymentVerb.test(text);
+  const isTransactionIntent =
+    isCreditCardPayment ||
+    isCreditCardPurchase ||
+    /(gast|compr|costo|consum|se fue|me pagaron|ingres|deposit|gan|cobr|recib|arriendo)/.test(
+      text,
+    );
+  const mentionsAccount =
+    accounts.some((account) => text.includes(normalizeText(account.name))) ||
+    /(debito|débito|credito|crédito|tarjeta|visa|mastercard)/.test(text);
+
+  if (isTransactionIntent && accounts.length > 1 && !mentionsAccount) {
+    return {
+      action: "unknown",
+      reply: "¿En qué cuenta debo registrar este movimiento?",
+    };
+  }
 
   if (isCreditCardPayment) {
     return {
