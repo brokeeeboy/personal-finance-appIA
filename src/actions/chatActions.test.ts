@@ -5,6 +5,7 @@ import {
   extractDebtDueDate,
   getDebtReminderPrompt,
   isPositiveDebtConfirmation,
+  findMentionedAccount,
   parseFinanceFallback,
 } from "../lib/chatHelpers";
 
@@ -96,4 +97,58 @@ test("parseFinanceFallback keeps transaction details while asking for an account
   assert.equal(result.type, "EXPENSE");
   assert.equal(result.description, "sushi");
   assert.equal(result.reply, "¿En qué cuenta debo registrar este movimiento?");
+});
+
+test("findMentionedAccount recognizes cash accounts and common spelling variants", () => {
+  const accounts = [
+    { id: "cash-1", name: "Billetera", type: "CASH" },
+    { id: "checking-1", name: "Cuenta Corriente", type: "CHECKING" },
+  ];
+
+  assert.equal(findMentionedAccount(accounts, "EFECTIVO")?.id, "cash-1");
+  assert.equal(findMentionedAccount(accounts, "fectivo")?.id, "cash-1");
+});
+
+test("parseFinanceFallback can recover a bare expense once an account is selected", () => {
+  const account = { id: "cash-1", name: "Efectivo", type: "CASH" };
+  const result = parseFinanceFallback("GASTE 3000", [account], [], []);
+
+  assert.equal(result.action, "transaction");
+  assert.equal(result.amount, 3000);
+  assert.equal(result.type, "EXPENSE");
+  assert.equal(result.accountId, account.id);
+});
+
+test("parseFinanceFallback understands colloquial amounts and expense phrases", () => {
+  const account = { id: "cash-1", name: "Efectivo", type: "CASH" };
+
+  const result = parseFinanceFallback(
+    "se me fueron 3 lucas en completos",
+    [account],
+    [],
+    [],
+  );
+
+  assert.equal(result.action, "transaction");
+  assert.equal(result.amount, 3000);
+  assert.equal(result.type, "EXPENSE");
+});
+
+test("parseFinanceFallback understands colloquial income phrases", () => {
+  const account = {
+    id: "checking-1",
+    name: "Cuenta Corriente",
+    type: "CHECKING",
+  };
+
+  const result = parseFinanceFallback(
+    "me entraron 50 mil del trabajo",
+    [account],
+    [],
+    [],
+  );
+
+  assert.equal(result.action, "transaction");
+  assert.equal(result.amount, 50000);
+  assert.equal(result.type, "INCOME");
 });

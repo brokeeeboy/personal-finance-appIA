@@ -19,10 +19,22 @@ function parseCurrencyNumber(value: string) {
 }
 
 function extractAmount(message: string) {
-  const matches = [...message.matchAll(/\d+(?:[.,]\d{3})*(?:[.,]\d+)?/g)];
+  const matches = [
+    ...message.matchAll(
+      /(\d+(?:[.,]\d{3})*(?:[.,]\d+)?)(?:\s*(mil|lucas?|k|millones?))?/gi,
+    ),
+  ];
   if (matches.length === 0) return 0;
 
-  const amounts = matches.map((match) => parseCurrencyNumber(match[0]));
+  const amounts = matches.map((match) => {
+    const base = parseCurrencyNumber(match[1]);
+    const unit = normalizeText(match[2] ?? "");
+    if (unit === "mil" || unit === "lucas" || unit === "luca" || unit === "k") {
+      return base * 1_000;
+    }
+    if (unit === "millon" || unit === "millones") return base * 1_000_000;
+    return base;
+  });
   return Math.max(...amounts.filter((amount) => amount > 0));
 }
 
@@ -95,9 +107,13 @@ export function findMentionedAccount(
 
   if (namedAccount) return namedAccount;
 
-  if (/\b(?:efectivo|cash)\b/.test(normalized)) {
-    return accounts.find((account) =>
-      /\b(?:efectivo|cash)\b/.test(normalizeText(account.name)),
+  if (/\b(?:e?fectivo|cash|plata en mano)\b/.test(normalized)) {
+    return accounts.find(
+      (account) =>
+        account.type === "CASH" ||
+        /\b(?:e?fectivo|cash|plata en mano)\b/.test(
+          normalizeText(account.name),
+        ),
     );
   }
 
@@ -384,10 +400,15 @@ export function parseFinanceFallback(
     /(gast|compr|costo|consum|deuda)/.test(text) &&
     creditTerms.test(text) &&
     !paymentVerb.test(text);
+  const isExpenseIntent =
+    /(gast|compr|pagu|costo|consum|salio|salieron|se fue|se me fue|deuda)/.test(
+      text,
+    );
   const isTransactionIntent =
+    isExpenseIntent ||
     isCreditCardPayment ||
     isCreditCardPurchase ||
-    /(gast|compr|costo|consum|se fue|me pagaron|ingres|deposit|gan|cobr|recib|arriendo)/.test(
+    /(me pagaron|ingres|deposit|entro|entraron|gan|cobr|recib|arriendo)/.test(
       text,
     );
   const mentionsAccount =
@@ -399,9 +420,7 @@ export function parseFinanceFallback(
       action: "unknown",
       amount,
       description,
-      type: /(gast|compr|costo|consum|deuda|se fue)/.test(text)
-        ? "EXPENSE"
-        : "INCOME",
+      type: isExpenseIntent ? "EXPENSE" : "INCOME",
       categoryId: matchedCategory?.id,
       reply: "¿En qué cuenta debo registrar este movimiento?",
     };
@@ -429,7 +448,7 @@ export function parseFinanceFallback(
     };
   }
 
-  if (/(gast|compr|costo|consum|deuda|se fue|se fue)/.test(text)) {
+  if (isExpenseIntent) {
     return {
       action: "transaction",
       amount,
@@ -440,7 +459,11 @@ export function parseFinanceFallback(
     };
   }
 
-  if (/(me pagaron|ingres|deposit|gan|cobr|recib|arriendo)/.test(text)) {
+  if (
+    /(me pagaron|ingres|deposit|entro|entraron|gan|cobr|recib|arriendo)/.test(
+      text,
+    )
+  ) {
     return {
       action: "transaction",
       amount,

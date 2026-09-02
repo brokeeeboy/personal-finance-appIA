@@ -35,6 +35,54 @@ type ParsedAction = {
   reply?: string;
 };
 
+function isAccountSelection(message: string) {
+  return /\b(?:e?fectivo|cash|plata en mano|cuenta|tarjeta|debito|débito|credito|crédito)\b/i.test(
+    message,
+  );
+}
+
+function rememberPendingTransaction(userId: string, parsed: ParsedAction) {
+  if (
+    parsed.action === "unknown" &&
+    typeof parsed.amount === "number" &&
+    parsed.amount > 0 &&
+    typeof parsed.description === "string" &&
+    typeof parsed.type === "string"
+  ) {
+    pendingTransactionDrafts.set(userId, {
+      amount: parsed.amount,
+      description: parsed.description,
+      type: parsed.type,
+      categoryId: parsed.categoryId,
+    });
+    return true;
+  }
+
+  return false;
+}
+
+function normalizeParsedAction(parsed: ParsedAction): ParsedAction {
+  const normalizedType = parsed.type?.toUpperCase();
+  const typeAliases: Record<string, string> = {
+    GASTO: "EXPENSE",
+    GASTOS: "EXPENSE",
+    EGRESO: "EXPENSE",
+    EGRESOS: "EXPENSE",
+    INGRESO: "INCOME",
+    INGRESOS: "INCOME",
+    ENTRADA: "INCOME",
+    ENTRADAS: "INCOME",
+    ME_DEBEN: "OWE_ME",
+  };
+
+  return {
+    ...parsed,
+    type: normalizedType
+      ? (typeAliases[normalizedType] ?? normalizedType)
+      : undefined,
+  };
+}
+
 async function executeParsedAction(
   parsed: ParsedAction,
   userId: string,
@@ -278,6 +326,29 @@ export async function processChatMessage(
     return { reply: "¿En qué cuenta debo registrar este movimiento?" };
   }
 
+  if (isAccountSelection(message)) {
+    const selectedAccount = findMentionedAccount(accounts, message);
+    const previousUserMessage = [...history]
+      .reverse()
+      .find((item) => item.role === "user")?.text;
+
+    if (selectedAccount && previousUserMessage) {
+      const previousAction = parseFinanceFallback(
+        previousUserMessage,
+        [selectedAccount],
+        categories,
+        goals,
+      );
+      if (previousAction.action === "transaction") {
+        return await executeParsedAction(
+          { ...previousAction, accountId: selectedAccount.id },
+          userId,
+          accounts,
+        );
+      }
+    }
+  }
+
   const fallback = parseFinanceFallback(message, accounts, categories, goals);
 
   try {
@@ -285,20 +356,7 @@ export async function processChatMessage(
     const aiBaseUrl = process.env.AI_BASE_URL;
 
     if (!apiKey || !aiBaseUrl) {
-      if (
-        fallback.action === "unknown" &&
-        fallback.reply === "¿En qué cuenta debo registrar este movimiento?" &&
-        typeof fallback.amount === "number" &&
-        typeof fallback.description === "string" &&
-        typeof fallback.type === "string"
-      ) {
-        pendingTransactionDrafts.set(userId, {
-          amount: fallback.amount,
-          description: fallback.description,
-          type: fallback.type,
-          categoryId: fallback.categoryId,
-        });
-      }
+      rememberPendingTransaction(userId, fallback);
       return await executeParsedAction(fallback, userId, accounts);
     }
 
@@ -326,6 +384,16 @@ REGLAS:
 7. Si falta información crucial (como el monto, la cuenta o la meta), si hay ambigüedad o es una charla normal, devuelve: { "action": "unknown", "reply": "Una pregunta breve y amable para obtener exactamente el dato que falta" }.
 8. También puedes responder preguntas financieras usando el contexto, pero siempre devuelve action "unknown" y escribe la respuesta en reply; nunca inventes datos.
 9. Nunca ejecutes ni confirmes una operación si todavía necesitas una aclaración.
+
+INTERPRETACIÓN DEL LENGUAJE:
+- Acepta mayúsculas, tildes omitidas, errores menores, modismos y frases incompletas.
+- “gasté”, “pagué”, “compré”, “se me fueron”, “salió de mi cuenta” o “consumí” significan un gasto.
+- “me pagaron”, “recibí”, “entró”, “me depositaron”, “cobré” o “gané” significan un ingreso.
+- “guardé”, “aparté”, “puse para mi meta” o “quiero ahorrar” significan un aporte a una meta.
+- “le presté”, “presté”, “me debe”, “le debo” o “quedó debiendo” significan una deuda.
+- “efectivo”, “cash”, “plata en mano” o una cuenta cuyo tipo sea CASH identifican esa cuenta.
+- Si el mensaje solo entrega un dato que faltaba, usa el historial para completar la operación.
+- Ejemplos: “salieron 3 lucas en comida” = gasto 3000; “me entraron 50 mil” = ingreso 50000; “pagué el uber con la débito” = gasto en la cuenta de débito.
 `;
 
     const controller = new AbortController();
@@ -376,25 +444,12 @@ REGLAS:
     let parsed: ParsedAction;
     try {
       const candidate = aiActionSchema.parse(JSON.parse(jsonStr));
-      parsed = candidate;
+      parsed = normalizeParsedAction(candidate);
     } catch {
       return await executeParsedAction(fallback, userId, accounts);
     }
 
-    if (
-      parsed.action === "unknown" &&
-      parsed.reply === "¿En qué cuenta debo registrar este movimiento?" &&
-      typeof parsed.amount === "number" &&
-      typeof parsed.description === "string" &&
-      typeof parsed.type === "string"
-    ) {
-      pendingTransactionDrafts.set(userId, {
-        amount: parsed.amount,
-        description: parsed.description,
-        type: parsed.type,
-        categoryId: parsed.categoryId,
-      });
-    }
+    rememberPendingTransaction(userId, parsed);
 
     return await executeParsedAction(parsed, userId, accounts);
   } catch (error) {

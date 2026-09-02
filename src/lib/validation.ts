@@ -55,7 +55,7 @@ export const aiActionSchema = z.object({
   action: z.enum(["transaction", "debt", "goal", "unknown"]),
   amount: positiveAmount.optional(),
   description: z.string().trim().max(200).optional(),
-  type: z.string().optional(),
+  type: z.enum(["INCOME", "EXPENSE", "OWE_ME", "I_OWE"]).optional(),
   accountId: z.string().trim().min(1).optional(),
   categoryId: z.string().trim().min(1).optional(),
   personName: z.string().trim().max(100).optional(),
