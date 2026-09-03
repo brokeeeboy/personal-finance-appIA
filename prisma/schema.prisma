@@ -11,6 +11,11 @@ enum UserRole {
   USER
 }
 
+enum PendingActionType {
+  DEBT
+  TRANSACTION
+}
+
 model User {
   id        String   @id @default(cuid())
   name      String?
@@ -19,12 +24,27 @@ model User {
   role      UserRole @default(USER)
   createdAt DateTime @default(now())
 
-  accounts      Account[]
-  categories    Category[]
-  debts         Debt[]
-  goals         Goal[]
-  categoryRules CategoryRule[]
-  transactions  Transaction[]
+  accounts       Account[]
+  categories     Category[]
+  debts          Debt[]
+  goals          Goal[]
+  categoryRules  CategoryRule[]
+  pendingActions PendingAction[]
+  transactions   Transaction[]
+}
+
+model PendingAction {
+  id        String            @id @default(cuid())
+  userId    String
+  type      PendingActionType
+  payload   Json
+  createdAt DateTime          @default(now())
+  expiresAt DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@index([expiresAt])
 }
 
 model Account {

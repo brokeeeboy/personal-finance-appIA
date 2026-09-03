@@ -65,6 +65,14 @@ export const aiActionSchema = z.object({
   reply: z.string().trim().max(500).optional(),
 });
 
+export const pendingActionPayloadSchema = z.object({
+  amount: positiveAmount,
+  description: z.string().trim().min(1).max(200),
+  type: z.enum(["EXPENSE", "INCOME", "OWE_ME", "I_OWE"]),
+  categoryId: z.string().trim().min(1).optional(),
+  personName: z.string().trim().min(1).max(100).optional(),
+});
+
 export function parseFormString(value: FormDataEntryValue | null) {
   return typeof value === "string" ? value.trim() : "";
 }

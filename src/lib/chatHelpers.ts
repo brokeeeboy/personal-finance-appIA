@@ -198,28 +198,6 @@ function extractPersonName(message: string) {
   return "persona";
 }
 
-const pendingDebtDrafts = new Map<
-  string,
-  {
-    type: string;
-    personName: string;
-    amount: number;
-    description: string;
-  }
->();
-
-export type PendingTransactionDraft = {
-  amount: number;
-  description: string;
-  type: string;
-  categoryId?: string;
-};
-
-export const pendingTransactionDrafts = new Map<
-  string,
-  PendingTransactionDraft
->();
-
 function getMonthNumber(value: string) {
   const monthMap: Record<string, number> = {
     enero: 0,
@@ -521,5 +499,3 @@ export function parseFinanceFallback(
       "¿Quieres registrar un gasto, un ingreso, una deuda o un aporte a una meta?",
   };
 }
-
-export { pendingDebtDrafts };

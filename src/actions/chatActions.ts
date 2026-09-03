@@ -11,10 +11,9 @@ import {
   getDebtReminderPrompt,
   isPositiveDebtConfirmation,
   findMentionedAccount,
-  pendingDebtDrafts,
-  pendingTransactionDrafts,
 } from "@/lib/chatHelpers";
-import { aiActionSchema } from "@/lib/validation";
+import { aiActionSchema, pendingActionPayloadSchema } from "@/lib/validation";
+import type { Prisma } from "@prisma/client";
 
 export type ChatHistoryMessage = {
   role: "user" | "ai";
@@ -35,13 +34,55 @@ type ParsedAction = {
   reply?: string;
 };
 
+function fallbackResponse(
+  reason: string,
+  fallback: ParsedAction,
+  userId: string,
+  accounts: Array<{ id: string; name: string; type: string }>,
+) {
+  console.warn(`[chat] fallback reason=${reason}`);
+  return executeParsedAction(fallback, userId, accounts).then((result) => ({
+    ...result,
+    usedFallback: true,
+  }));
+}
+
+const PENDING_ACTION_TTL_MS = 30 * 60 * 1000;
+
+async function savePendingAction(
+  userId: string,
+  type: "DEBT" | "TRANSACTION",
+  payload: Record<string, unknown>,
+) {
+  await prisma.pendingAction.deleteMany({ where: { userId } });
+  await prisma.pendingAction.create({
+    data: {
+      userId,
+      type,
+      payload: payload as Prisma.InputJsonValue,
+      expiresAt: new Date(Date.now() + PENDING_ACTION_TTL_MS),
+    },
+  });
+}
+
+async function getPendingAction(userId: string) {
+  const now = new Date();
+  await prisma.pendingAction.deleteMany({
+    where: { userId, expiresAt: { lte: now } },
+  });
+  return prisma.pendingAction.findFirst({
+    where: { userId },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
 function isAccountSelection(message: string) {
   return /\b(?:e?fectivo|cash|plata en mano|cuenta|tarjeta|debito|débito|credito|crédito)\b/i.test(
     message,
   );
 }
 
-function rememberPendingTransaction(userId: string, parsed: ParsedAction) {
+function hasPendingTransaction(parsed: ParsedAction) {
   if (
     parsed.action === "unknown" &&
     typeof parsed.amount === "number" &&
@@ -49,12 +90,6 @@ function rememberPendingTransaction(userId: string, parsed: ParsedAction) {
     typeof parsed.description === "string" &&
     typeof parsed.type === "string"
   ) {
-    pendingTransactionDrafts.set(userId, {
-      amount: parsed.amount,
-      description: parsed.description,
-      type: parsed.type,
-      categoryId: parsed.categoryId,
-    });
     return true;
   }
 
@@ -148,7 +183,7 @@ async function executeParsedAction(
         parsed.amount > 0 &&
         typeof parsed.type === "string"
       ) {
-        pendingDebtDrafts.set(userId, {
+        await savePendingAction(userId, "DEBT", {
           type: parsed.type,
           personName: parsed.personName,
           amount: parsed.amount,
@@ -184,7 +219,6 @@ async function executeParsedAction(
       },
     });
 
-    pendingDebtDrafts.delete(userId);
     revalidatePath("/deudas");
     return {
       reply: `✅ Anotado. Registré que ${parsed.type === "OWE_ME" ? `${parsed.personName} te debe` : `le debes a ${parsed.personName}`} $${parsed.amount}${parsed.dueDate ? ` y vence el ${new Date(parsed.dueDate).toLocaleDateString("es-CL")}` : ""}.`,
@@ -241,8 +275,16 @@ export async function processChatMessage(
     return { reply: "Escribe un mensaje de hasta 500 caracteres." };
   }
 
-  const draft = pendingDebtDrafts.get(userId);
-  if (draft) {
+  const pendingAction = await getPendingAction(userId);
+  const draftResult =
+    pendingAction?.type === "DEBT"
+      ? pendingActionPayloadSchema.safeParse(pendingAction.payload)
+      : null;
+  const draft = draftResult?.success ? draftResult.data : null;
+  if (pendingAction && !draft) {
+    await prisma.pendingAction.delete({ where: { id: pendingAction.id } });
+  }
+  if (draft && draft.personName) {
     const dueDate = extractDebtDueDate(message);
     if (dueDate) {
       await prisma.debt.create({
@@ -258,7 +300,7 @@ export async function processChatMessage(
         },
       });
 
-      pendingDebtDrafts.delete(userId);
+      await prisma.pendingAction.delete({ where: { id: pendingAction!.id } });
       revalidatePath("/deudas");
       return {
         reply: `✅ Anotado. Registré que ${draft.type === "OWE_ME" ? `${draft.personName} te debe` : `le debes a ${draft.personName}`} $${draft.amount} y vence el ${dueDate.toLocaleDateString("es-CL")}.`,
@@ -311,11 +353,23 @@ export async function processChatMessage(
     };
   }
 
-  const pendingTransaction = pendingTransactionDrafts.get(userId);
+  const transactionAction =
+    pendingAction?.type === "TRANSACTION"
+      ? pendingAction
+      : await getPendingAction(userId);
+  const transactionResult =
+    transactionAction?.type === "TRANSACTION"
+      ? pendingActionPayloadSchema.safeParse(transactionAction.payload)
+      : null;
+  const pendingTransaction = transactionResult?.success
+    ? transactionResult.data
+    : null;
   if (pendingTransaction) {
     const account = findMentionedAccount(accounts, message);
     if (account) {
-      pendingTransactionDrafts.delete(userId);
+      await prisma.pendingAction.delete({
+        where: { id: transactionAction!.id },
+      });
       return await executeParsedAction(
         { action: "transaction", ...pendingTransaction, accountId: account.id },
         userId,
@@ -356,8 +410,15 @@ export async function processChatMessage(
     const aiBaseUrl = process.env.AI_BASE_URL;
 
     if (!apiKey || !aiBaseUrl) {
-      rememberPendingTransaction(userId, fallback);
-      return await executeParsedAction(fallback, userId, accounts);
+      if (hasPendingTransaction(fallback)) {
+        await savePendingAction(userId, "TRANSACTION", {
+          amount: fallback.amount,
+          description: fallback.description,
+          type: fallback.type,
+          categoryId: fallback.categoryId,
+        });
+      }
+      return await fallbackResponse("no_api_key", fallback, userId, accounts);
     }
 
     const systemPrompt = `
@@ -396,44 +457,67 @@ INTERPRETACIÓN DEL LENGUAJE:
 - Ejemplos: “salieron 3 lucas en comida” = gasto 3000; “me entraron 50 mil” = ingreso 50000; “pagué el uber con la débito” = gasto en la cuenta de débito.
 `;
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
-    const response = await fetch(
-      `${aiBaseUrl.replace(/\/$/, "")}/chat/completions`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: "deepseek-chat",
-          messages: [
-            { role: "system", content: systemPrompt },
-            ...history.slice(-8).map((item) => ({
-              role:
-                item.role === "ai" ? ("assistant" as const) : ("user" as const),
-              content: item.text,
-            })),
-            { role: "user", content: message },
-          ],
-          temperature: 0.1,
-        }),
-        signal: controller.signal,
-      },
-    );
-    clearTimeout(timeout);
+    const requestBody = JSON.stringify({
+      model: "deepseek-chat",
+      messages: [
+        { role: "system", content: systemPrompt },
+        ...history.slice(-8).map((item) => ({
+          role: item.role === "ai" ? ("assistant" as const) : ("user" as const),
+          content: item.text,
+        })),
+        { role: "user", content: message },
+      ],
+      temperature: 0.1,
+    });
+    let response: Response | undefined;
+    let lastFailure: "timeout" | "http_error" | undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 20_000);
+      try {
+        response = await fetch(
+          `${aiBaseUrl.replace(/\/$/, "")}/chat/completions`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${apiKey}`,
+            },
+            body: requestBody,
+            signal: controller.signal,
+          },
+        );
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          lastFailure = "timeout";
+          if (attempt === 0) continue;
+          return await fallbackResponse("timeout", fallback, userId, accounts);
+        }
+        throw error;
+      } finally {
+        clearTimeout(timeout);
+      }
+      if (response.ok) break;
+      lastFailure = "http_error";
+      if (response.status < 500 || attempt === 1) {
+        return await fallbackResponse("http_error", fallback, userId, accounts);
+      }
+    }
 
-    if (!response.ok) {
-      console.error("AI request failed:", response.status, response.statusText);
-      return await executeParsedAction(fallback, userId, accounts);
+    if (!response?.ok) {
+      return await fallbackResponse(
+        lastFailure ?? "http_error",
+        fallback,
+        userId,
+        accounts,
+      );
     }
 
     const data = await response.json();
     const aiContent = data?.choices?.[0]?.message?.content;
 
     if (!aiContent) {
-      return await executeParsedAction(fallback, userId, accounts);
+      return await fallbackResponse("invalid_json", fallback, userId, accounts);
     }
 
     const jsonStr = String(aiContent)
@@ -445,11 +529,29 @@ INTERPRETACIÓN DEL LENGUAJE:
     try {
       const candidate = aiActionSchema.parse(JSON.parse(jsonStr));
       parsed = normalizeParsedAction(candidate);
-    } catch {
-      return await executeParsedAction(fallback, userId, accounts);
+    } catch (error) {
+      const reason = (() => {
+        try {
+          aiActionSchema.parse(JSON.parse(jsonStr));
+          return "invalid_json";
+        } catch (schemaError) {
+          return schemaError instanceof Error && schemaError.name === "ZodError"
+            ? "schema_validation_failed"
+            : "invalid_json";
+        }
+      })();
+      void error;
+      return await fallbackResponse(reason, fallback, userId, accounts);
     }
 
-    rememberPendingTransaction(userId, parsed);
+    if (hasPendingTransaction(parsed)) {
+      await savePendingAction(userId, "TRANSACTION", {
+        amount: parsed.amount,
+        description: parsed.description,
+        type: parsed.type,
+        categoryId: parsed.categoryId,
+      });
+    }
 
     return await executeParsedAction(parsed, userId, accounts);
   } catch (error) {
@@ -457,6 +559,6 @@ INTERPRETACIÓN DEL LENGUAJE:
       "Error en proveedor de IA:",
       error instanceof Error ? error.name : "unknown",
     );
-    return await executeParsedAction(fallback, userId, accounts);
+    return await fallbackResponse("http_error", fallback, userId, accounts);
   }
 }
