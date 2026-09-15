@@ -69,7 +69,7 @@ export default function TransactionTable({
             {transactions.map((t) => (
               <tr key={t.id} className="hover:bg-gray-50/50 transition-colors group">
                 <td className="p-4 text-sm text-gray-600">
-                  {new Date(t.date).toLocaleDateString('es-CL', { day: '2-digit', month: 'short', year: 'numeric' })}
+                  {new Date(t.date).toLocaleDateString('es-CL', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}
                 </td>
                 <td className="p-4 font-medium text-gray-900 flex items-center gap-2">
                   <div className={`p-1.5 rounded-full ${t.type === 'INCOME' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>

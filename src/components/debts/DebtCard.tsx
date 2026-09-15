@@ -96,7 +96,7 @@ export default function DebtCard({ debt }: { debt: Debt }) {
           {debt.dueDate && (
             <span className="flex items-center gap-1 text-orange-600 font-medium">
               <Calendar size={12} /> 
-              {new Date(debt.dueDate).toLocaleDateString('es-CL', { day: '2-digit', month: 'short' })}
+              {new Date(debt.dueDate).toLocaleDateString('es-CL', { day: '2-digit', month: 'short', timeZone: 'UTC' })}
             </span>
           )}
         </div>

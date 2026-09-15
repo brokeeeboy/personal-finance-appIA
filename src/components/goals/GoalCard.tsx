@@ -65,7 +65,7 @@ export default function GoalCard({ goal }: { goal: Goal }) {
             <h3 className="font-bold text-gray-900 text-lg">{goal.name}</h3>
             {goal.targetDate && (
               <p className="text-xs text-gray-500">
-                Objetivo: {new Date(goal.targetDate).toLocaleDateString('es-CL', { month: 'long', year: 'numeric' })}
+                Objetivo: {new Date(goal.targetDate).toLocaleDateString('es-CL', { month: 'long', year: 'numeric', timeZone: 'UTC' })}
               </p>
             )}
           </div>

@@ -17,6 +17,13 @@ export default function DebtReminderBanner({
   if (debts.length === 0) return null;
 
   const now = new Date();
+  // dueDate se guarda como medianoche UTC del día elegido (viene de un
+  // <input type="date">). Comparamos contra "hoy" en UTC, no contra el
+  // instante actual, para no marcar como vencida una deuda que vence hoy
+  // pero cuya medianoche UTC ya pasó en zonas horarias como Chile (UTC-3/-4).
+  const todayUTC = new Date(
+    Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()),
+  );
   const formatCurrency = (amount: number) =>
     new Intl.NumberFormat("es-CL", {
       style: "currency",
@@ -24,7 +31,7 @@ export default function DebtReminderBanner({
     }).format(amount);
 
   const overdueCount = debts.filter(
-    (d) => d.dueDate && new Date(d.dueDate) < now,
+    (d) => d.dueDate && new Date(d.dueDate) < todayUTC,
   ).length;
 
   return (
@@ -38,7 +45,7 @@ export default function DebtReminderBanner({
         </p>
         <ul className="mt-1.5 space-y-1 text-sm text-amber-100/90">
           {debts.slice(0, 3).map((debt) => {
-            const isOverdue = debt.dueDate && new Date(debt.dueDate) < now;
+            const isOverdue = debt.dueDate && new Date(debt.dueDate) < todayUTC;
             return (
               <li key={debt.id} className="truncate">
                 {debt.type === "OWE_ME"
@@ -55,7 +62,7 @@ export default function DebtReminderBanner({
                 >
                   {isOverdue
                     ? "vencida"
-                    : `vence ${new Date(debt.dueDate!).toLocaleDateString("es-CL", { day: "2-digit", month: "short" })}`}
+                    : `vence ${new Date(debt.dueDate!).toLocaleDateString("es-CL", { day: "2-digit", month: "short", timeZone: "UTC" })}`}
                 </span>
               </li>
             );

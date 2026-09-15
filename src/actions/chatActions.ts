@@ -235,7 +235,7 @@ async function executeParsedAction(
 
     revalidatePath("/deudas");
     return {
-      reply: `✅ Anotado. Registré que ${parsed.type === "OWE_ME" ? `${parsed.personName} te debe` : `le debes a ${parsed.personName}`} $${parsed.amount}${parsed.dueDate ? ` y vence el ${new Date(parsed.dueDate).toLocaleDateString("es-CL")}` : ""}.`,
+      reply: `✅ Anotado. Registré que ${parsed.type === "OWE_ME" ? `${parsed.personName} te debe` : `le debes a ${parsed.personName}`} $${parsed.amount}${parsed.dueDate ? ` y vence el ${new Date(parsed.dueDate).toLocaleDateString("es-CL", { timeZone: "UTC" })}` : ""}.`,
     };
   }
 
@@ -329,7 +329,7 @@ export async function processChatMessage(
       await prisma.pendingAction.delete({ where: { id: pendingAction!.id } });
       revalidatePath("/deudas");
       return {
-        reply: `✅ Anotado. Registré que ${draft.type === "OWE_ME" ? `${draft.personName} te debe` : `le debes a ${draft.personName}`} $${draft.amount} y vence el ${dueDate.toLocaleDateString("es-CL")}.`,
+        reply: `✅ Anotado. Registré que ${draft.type === "OWE_ME" ? `${draft.personName} te debe` : `le debes a ${draft.personName}`} $${draft.amount} y vence el ${dueDate.toLocaleDateString("es-CL", { timeZone: "UTC" })}.`,
       };
     }
   }

@@ -534,13 +534,20 @@ export function parseFinanceFallback(
       text,
     )
   ) {
+    // "me debe(n)"/"te debe" = a alguien le debo a mí (OWE_ME); "preste/prestamo"
+    // en primera persona = yo presté, así que también me deben (OWE_ME).
+    // "le debo", "le debes", "debemos" = yo (o nosotros) le debemos a alguien (I_OWE).
+    const debtType =
+      /(me debe|me deben|te debe|\bpreste\b|\bprestamo\b)/.test(text) &&
+      !/(me presto|me prestaron|prestado a mi)/.test(text)
+        ? "OWE_ME"
+        : "I_OWE";
+
     const dueDate = extractDebtDueDate(message);
     if (!dueDate) {
       return {
         action: "debt",
-        type: /(?:te debe|le debes|le debo|debemos)/.test(text)
-          ? "OWE_ME"
-          : "I_OWE",
+        type: debtType,
         personName: extractPersonName(message),
         amount,
         description,
@@ -552,9 +559,7 @@ export function parseFinanceFallback(
 
     return {
       action: "debt",
-      type: /(?:te debe|le debes|le debo|debemos)/.test(text)
-        ? "OWE_ME"
-        : "I_OWE",
+      type: debtType,
       personName: extractPersonName(message),
       amount,
       description,

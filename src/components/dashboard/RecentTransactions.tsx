@@ -55,7 +55,7 @@ export default function RecentTransactions({
                 <div>
                   <p className="font-medium text-white">{t.description}</p>
                   <p className="text-xs text-slate-400 flex gap-2 flex-wrap">
-                    <span>{new Date(t.date).toLocaleDateString("es-CL")}</span>
+                    <span>{new Date(t.date).toLocaleDateString("es-CL", { timeZone: "UTC" })}</span>
                     <span>•</span>
                     <span>{t.category?.name || "Sin categoría"}</span>
                     <span>•</span>
