@@ -1,0 +1,180 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  ADMIN
+  USER
+}
+
+enum PendingActionType {
+  DEBT
+  TRANSACTION
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String?
+  email     String   @unique
+  password  String?
+  role      UserRole @default(USER)
+  createdAt DateTime @default(now())
+
+  accounts       Account[]
+  categories     Category[]
+  debts          Debt[]
+  goals          Goal[]
+  categoryRules  CategoryRule[]
+  pendingActions PendingAction[]
+  transactions   Transaction[]
+  budgets        Budget[]
+}
+
+model PendingAction {
+  id        String            @id @default(cuid())
+  userId    String
+  type      PendingActionType
+  payload   Json
+  createdAt DateTime          @default(now())
+  expiresAt DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@index([expiresAt])
+}
+
+model Account {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  type        String // "DEBIT", "CREDIT", "CHECKING", "CASH"
+  bankName    String?
+  lastFour    String?
+  creditLimit Decimal?
+  billingDay  Int?
+  paymentDay  Int?
+  balance     Decimal  @default(0) @db.Decimal(18, 2)
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@index([userId])
+}
+
+model Category {
+  id     String  @id @default(cuid())
+  userId String
+  name   String
+  color  String?
+
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+  rules        CategoryRule[]
+  budgets      Budget[]
+
+  @@index([userId])
+}
+
+model Transaction {
+  id         String  @id @default(cuid())
+  userId     String
+  accountId  String
+  categoryId String?
+
+  description   String
+  merchant      String?
+  amount        Decimal  @db.Decimal(18, 2)
+  type          String // "INCOME", "EXPENSE"
+  date          DateTime
+  paymentMethod String?
+
+  isAutoCategorized Boolean  @default(false)
+  confidenceLevel   Decimal? @db.Decimal(5, 4)
+  needsReview       Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account  Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@index([userId, date])
+  @@index([accountId])
+  @@index([categoryId])
+}
+
+model CategoryRule {
+  id              String @id @default(cuid())
+  userId          String
+  categoryId      String
+  merchantKeyword String
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([categoryId])
+}
+
+model Debt {
+  id          String    @id @default(cuid())
+  userId      String
+  personName  String
+  amount      Decimal   @db.Decimal(18, 2)
+  description String?
+  date        DateTime  @default(now())
+  dueDate     DateTime?
+  type        String // "OWE_ME", "I_OWE"
+  status      String // "PENDING", "PAID"
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([userId, dueDate])
+}
+
+model Goal {
+  id            String    @id @default(cuid())
+  userId        String
+  name          String
+  targetAmount  Decimal   @db.Decimal(18, 2)
+  currentAmount Decimal   @default(0) @db.Decimal(18, 2)
+  targetDate    DateTime?
+
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contributions GoalContribution[]
+
+  @@index([userId])
+}
+
+model GoalContribution {
+  id     String   @id @default(cuid())
+  goalId String
+  amount Decimal  @db.Decimal(18, 2)
+  date   DateTime @default(now())
+
+  goal Goal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  @@index([goalId])
+}
+
+model Budget {
+  id         String   @id @default(cuid())
+  userId     String
+  categoryId String
+  amount     Decimal  @db.Decimal(18, 2)
+  month      Int // 1-12
+  year       Int
+  createdAt  DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, categoryId, month, year])
+  @@index([userId, year, month])
+}
